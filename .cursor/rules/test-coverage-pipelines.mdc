@@ -1,0 +1,329 @@
+---
+description: Detailed test coverage summary for DLT Pipeline API endpoints and SDK functions
+globs:
+  - "api_layer/tests/unit_tests/test_dbrx_pipelines.py"
+  - "api_layer/tests/unit_tests/test_routes_pipelines.py"
+  - "api_layer/tests/unit_tests/test_token_gen.py"
+  - "api_layer/tests/fixtures/pipeline_fixtures.py"
+---
+
+# Test Coverage Summary - Pipeline APIs
+
+## Overview
+This document summarizes the test coverage for the DLT Pipeline API endpoints and SDK functions that were developed and tested.
+
+**Last Updated:** January 20, 2026  
+**Test Suite Status:** ✅ All 40 tests passing
+
+---
+
+## Test Suites
+
+### 1. SDK Functions (`test_dbrx_pipelines.py`)
+**Module Under Test:** `src/dbrx_api/jobs/dbrx_pipelines.py`  
+**Tests:** 12 passing  
+**Coverage:** Core pipeline management functions
+
+#### Test Classes and Coverage
+
+##### `TestGetPipelineByName` (3 tests)
+- ✅ `test_get_pipeline_by_name_success` - Successfully retrieves pipeline
+- ✅ `test_get_pipeline_by_name_not_found` - Returns None when pipeline doesn't exist
+- ✅ `test_get_pipeline_by_name_exception` - Handles API exceptions gracefully
+
+**Covered Lines:**
+- Pipeline listing and filtering logic
+- Error handling for non-existent pipelines
+- Exception handling for API errors
+
+##### `TestUpdatePipelineContinuous` (3 tests)
+- ✅ `test_update_continuous_mode_to_true` - Updates pipeline to continuous mode
+- ✅ `test_update_continuous_mode_pipeline_not_found` - Handles missing pipeline
+- ✅ `test_update_continuous_preserves_all_settings` - Preserves all pipeline configurations
+
+**Covered Lines:**
+- Pipeline existence check via `get_pipeline_by_name`
+- Full pipeline spec retrieval
+- Configuration preservation (catalog, target, libraries, storage, serverless, development, notifications, tags)
+- Pipeline update API call with all parameters
+- Error handling for missing pipelines
+
+##### `TestPipelineFullRefresh` (4 tests)
+- ✅ `test_full_refresh_idle_pipeline` - Refreshes idle pipeline
+- ✅ `test_full_refresh_running_pipeline_success` - Stops running pipeline then refreshes
+- ✅ `test_full_refresh_timeout` - Handles timeout when stopping pipeline
+- ✅ `test_full_refresh_pipeline_not_found` - Handles missing pipeline
+
+**Covered Lines:**
+- Pipeline state checking (IDLE, RUNNING, STARTING, STOPPING)
+- Pipeline stop operation with wait loop
+- Timeout handling (600 seconds / 10 minutes)
+- Full refresh initiation
+- Error messages for various failure modes
+
+##### `TestDeletePipeline` (2 tests)
+- ✅ `test_delete_pipeline_success` - Successfully deletes pipeline
+- ✅ `test_delete_pipeline_permission_error` - Handles permission denied errors
+
+**Covered Lines:**
+- Pipeline deletion API call
+- Permission error detection
+- Success/failure return values
+
+---
+
+### 2. API Endpoints (`test_routes_pipelines.py`)
+**Module Under Test:** `src/dbrx_api/routes_pipelines.py`  
+**Tests:** 19 passing  
+**Coverage:** HTTP endpoints for pipeline operations
+
+#### Test Classes and Coverage
+
+##### `TestPipelineAuthenticationHeaders` (1 test)
+- ✅ `test_missing_workspace_url_header` - Validates required X-Workspace-URL header
+
+**Covered Lines:**
+- Workspace URL dependency
+- Header validation
+- 422 Unprocessable Content error response
+
+##### `TestUpdatePipelineContinuousEndpoint` (6 tests)
+- ✅ `test_update_continuous_to_true_success` - Updates to continuous mode
+- ✅ `test_update_continuous_to_false_success` - Updates to triggered mode
+- ✅ `test_update_continuous_pipeline_not_found` - Returns 404 for missing pipeline
+- ✅ `test_update_continuous_permission_denied` - Returns 403 for permission errors
+- ✅ `test_update_continuous_missing_field` - Validates required field
+- ✅ `test_update_continuous_invalid_type` - Validates field type
+
+**Covered Lines:**
+- PUT `/pipelines/{pipeline_name}/continuous` endpoint
+- Pydantic model validation (`UpdatePipelineContinuousModel`)
+- SDK function call (`update_pipeline_continuous_sdk`)
+- Success response (200 OK)
+- Error responses (404, 403, 422)
+- JSON response formatting
+
+##### `TestPipelineFullRefreshEndpoint` (5 tests)
+- ✅ `test_full_refresh_success` - Successfully starts full refresh
+- ✅ `test_full_refresh_pipeline_not_found` - Returns 404 for missing pipeline
+- ✅ `test_full_refresh_timeout` - Returns 408 for timeout
+- ✅ `test_full_refresh_permission_denied` - Returns 403 for permission errors  
+- ✅ `test_full_refresh_generic_error` - Returns 400 for other errors
+
+**Covered Lines:**
+- POST `/pipelines/{pipeline_name}/full-refresh` endpoint
+- SDK function call (`pipeline_full_refresh_sdk`)
+- Success response with update details
+- Error responses (404, 403, 408, 400)
+- Error message parsing and categorization
+
+##### `TestDeletePipelineEndpoint` (3 tests)
+- ✅ `test_delete_pipeline_success` - Successfully deletes pipeline
+- ✅ `test_delete_pipeline_not_found` - Returns 404 for missing pipeline
+- ✅ `test_delete_pipeline_permission_denied` - Returns 403 for permission errors
+
+**Covered Lines:**
+- DELETE `/pipelines/{pipeline_name}` endpoint
+- Pipeline existence check before deletion
+- SDK function calls (`get_pipeline_by_name_sdk`, `delete_pipeline_sdk`)
+- Success/error response handling
+
+##### `TestGetPipelineByNameEndpoint` (2 tests)
+- ✅ `test_get_pipeline_success` - Successfully retrieves pipeline
+- ✅ `test_get_pipeline_not_found` - Returns 404 for missing pipeline
+
+**Covered Lines:**
+- GET `/pipelines/{pipeline_name}` endpoint
+- Pipeline retrieval and serialization
+- 404 error handling
+
+##### `TestListPipelinesEndpoint` (2 tests)
+- ✅ `test_list_all_pipelines_success` - Lists all pipelines
+- ✅ `test_list_pipelines_empty` - Handles empty pipeline list
+
+**Covered Lines:**
+- GET `/pipelines` endpoint
+- Pipeline listing with search criteria
+- Empty result handling
+
+---
+
+### 3. Authentication (`test_token_gen.py`)
+**Module Under Test:** `src/dbrx_api/dbrx_auth/token_gen.py`  
+**Tests:** 9 passing  
+**Coverage:** OAuth2 token generation
+
+#### Test Classes and Coverage
+
+##### `TestGetAuthToken` (7 tests)
+- ✅ `test_get_auth_token_success` - Generates token successfully
+- ✅ `test_get_auth_token_missing_credentials` - Handles missing env vars
+- ✅ `test_get_auth_token_request_fails` - Handles 401 errors
+- ✅ `test_get_auth_token_invalid_json` - Handles malformed responses
+- ✅ `test_get_auth_token_no_access_token_in_response` - Validates response structure
+- ✅ `test_get_auth_token_network_error` - Handles network failures
+- ✅ `test_get_auth_token_default_expiry` - Uses default expiry when not provided
+
+**Covered Lines:**
+- Settings validation
+- OAuth2 token request
+- Response parsing
+- Error handling for various failure modes
+- Token expiration calculation
+
+##### `TestCustomError` (2 tests)
+- ✅ `test_custom_error_message` - Custom error message storage
+- ✅ `test_custom_error_inheritance` - Exception inheritance
+
+---
+
+## Test Fixtures
+
+### Core Fixtures (`tests/fixtures/`)
+
+#### `pipeline_fixtures.py`
+- `mock_pipeline_state_info` - Lightweight pipeline info (PipelineStateInfo)
+- `mock_pipeline_spec` - Pipeline specification with configuration
+- `mock_get_pipeline_response` - Full pipeline details (GetPipelineResponse)
+- `mock_create_pipeline_response` - Pipeline creation response
+- `mock_start_update_response` - Update start response
+- `mock_pipeline_notifications` - Notification configuration
+- `mock_pipeline_cluster` - Cluster configuration
+- `mock_pipelines_api` - Mocked Databricks Pipelines API
+- `mock_workspace_client_pipelines` - Mocked WorkspaceClient for pipelines
+- `mock_get_pipeline_by_name` - Mocked SDK function
+- `sample_pipeline_config` - Sample configuration dict
+- `sample_create_pipeline_request` - Sample creation request
+- `sample_update_continuous_request` - Sample continuous update request
+- `sample_pipeline_tags` - Sample tags dict
+
+#### `app_fixtures.py`
+- `mock_settings` - Mocked application settings
+- `mock_get_auth_token` - Mocked token generation
+- `app` - FastAPI test application
+- `client` - Authenticated test client with workspace reachability mock
+- `unauthenticated_client` - Test client without auth headers
+
+#### `databricks_fixtures.py`
+- `mock_auth_token` - Mocked authentication token
+- `mock_workspace_reachable` - Mocked workspace reachability check
+
+---
+
+## Key Test Coverage Improvements
+
+### 1. Fixed Issues
+- ✅ Replaced deprecated `HTTP_422_UNPROCESSABLE_ENTITY` with `HTTP_422_UNPROCESSABLE_CONTENT`
+- ✅ Fixed 502 Bad Gateway errors by mocking workspace reachability checks
+- ✅ Corrected mock paths to match actual import locations in routes
+- ✅ Fixed Pydantic serialization warnings by using real SDK objects instead of MagicMock
+- ✅ Fixed Settings validation test by mocking Settings class directly
+
+### 2. Code Quality
+- All tests follow consistent naming conventions
+- Comprehensive error case coverage
+- Mock objects properly configured with return values
+- Test assertions validate both success and error paths
+- Fixtures properly isolated and reusable
+
+### 3. Coverage Gaps (Future Work)
+The following areas may benefit from additional test coverage:
+- Integration tests with real Databricks API (currently all mocked)
+- Edge cases for large pipeline configurations
+- Concurrent pipeline operations
+- Rate limiting and retry logic
+- Full pipeline lifecycle tests (create → update → delete)
+
+---
+
+## Running Tests
+
+### Run All Pipeline Tests
+```bash
+cd api_layer
+python -m pytest tests/unit_tests/test_dbrx_pipelines.py tests/unit_tests/test_routes_pipelines.py -v
+```
+
+### Run Specific Test Suite
+```bash
+# SDK tests only
+python -m pytest tests/unit_tests/test_dbrx_pipelines.py -v
+
+# Route tests only
+python -m pytest tests/unit_tests/test_routes_pipelines.py -v
+
+# Auth tests only
+python -m pytest tests/unit_tests/test_token_gen.py -v
+```
+
+### Run with Coverage Report
+```bash
+python -m pytest tests/ --cov=dbrx_api --cov-report=html --cov-report=term-missing
+```
+
+### Quick Test Run
+```bash
+python -m pytest tests/ -q
+```
+
+---
+
+## Test Statistics
+
+| Metric | Value |
+|--------|-------|
+| Total Tests | 40 |
+| Passing Tests | 40 (100%) |
+| Failed Tests | 0 |
+| SDK Function Tests | 12 |
+| API Endpoint Tests | 19 |
+| Authentication Tests | 9 |
+| Test Fixtures | 15+ |
+| Lines of Test Code | ~1,500+ |
+
+---
+
+## Continuous Integration
+
+### Pre-commit Checks
+All code changes must pass:
+- `black` - Code formatting (line length: 119)
+- `isort` - Import sorting
+- `flake8` - Linting
+- `pylint` - Static analysis
+- `mypy` - Type checking
+- `pytest` - All tests passing
+
+### GitHub Actions
+The following workflows run on pull requests:
+- Unit tests with coverage
+- Code quality checks
+- Security scans (Snyk)
+
+---
+
+## Maintenance Notes
+
+### Adding New Pipeline Tests
+1. Add test fixtures to `tests/fixtures/pipeline_fixtures.py` if needed
+2. Create test class in appropriate test file
+3. Follow naming convention: `Test<Feature>` class, `test_<scenario>` methods
+4. Mock external dependencies (WorkspaceClient, HTTP requests)
+5. Assert both success and error paths
+6. Run full test suite to ensure no regressions
+
+### Updating Fixtures
+When Databricks SDK updates:
+1. Review new fields in `PipelineSpec`, `GetPipelineResponse`, etc.
+2. Update fixture factories to include new fields
+3. Update tests to validate new functionality
+4. Ensure backward compatibility with existing tests
+
+---
+
+## References
+
+- [Databricks SDK Documentation](https://databricks-sdk-py.readthedocs.io/)
+- [FastAPI Testing](https://fastapi.tiangolo.com/tutorial/testing/)
+- [Pytest Documentation](https://docs.pytest.org/)
+- [Project Overview](../README.md)

@@ -1,0 +1,89 @@
+---
+description: DeltaShare Cursor Rules Index - See individual rule files for details
+alwaysApply: true
+---
+
+# DeltaShare Cursor Rules
+
+This project uses modular Cursor rules organized by domain. See the following rule files:
+
+| Rule File | Scope | Description |
+|-----------|-------|-------------|
+| `project-overview.mdc` | Always | Project architecture and monorepo structure |
+| `python-backend.mdc` | `*.py` | FastAPI, Pydantic, async patterns |
+| `code-quality.mdc` | Always | black, isort, flake8, pylint, mypy |
+| `testing-standards.mdc` | `test_*.py` | pytest conventions and coverage |
+| `test-coverage-pipelines.mdc` | Reference | Detailed test coverage for pipeline APIs |
+| `database-patterns.mdc` | `db/**/*.py` | SQLAlchemy 2.0 async, PostgreSQL |
+| `security-auth.mdc` | `auth/**/*.py` | Azure AD, RBAC patterns |
+| `api-design.mdc` | `routes/**/*.py` | RESTful conventions, error handling |
+| `databricks-integration.mdc` | `dltshr/**/*.py`, `jobs/**/*.py` | Delta Sharing SDK patterns |
+| `phase2-frontend.mdc` | `web/**/*` | Next.js/React (Phase 2 placeholder) |
+
+## Project Structure
+
+```
+api_layer/src/dbrx_api/
+├── routes/                 # API route handlers
+│   ├── routes_health.py
+│   ├── routes_pipelines.py
+│   ├── routes_recipient.py
+│   ├── routes_schedule.py
+│   └── routes_share.py
+├── schemas/                # Pydantic models
+│   └── schemas.py
+├── jobs/                   # Databricks Jobs SDK
+│   ├── dbrx_pipelines.py
+│   └── dbrx_schedule.py
+├── dltshr/                 # Delta Sharing SDK
+│   ├── share.py
+│   └── recipient.py
+├── dbrx_auth/              # Authentication
+├── monitoring/             # Logging
+├── main.py                 # App factory
+├── settings.py             # Configuration
+├── dependencies.py         # FastAPI dependencies
+└── errors.py               # Exception handlers
+```
+
+## Quick Reference
+
+### Environment Setup
+```bash
+cd api_layer
+pip install -e ".[dev]"
+pre-commit install
+```
+
+### Common Commands
+```bash
+make lint      # Run all linters
+make test      # Run tests with coverage
+make run-dev   # Start dev server
+```
+
+### Import Patterns
+```python
+# Routes import
+from dbrx_api.routes.routes_schedule import ROUTER_DBRX_SCHEDULE
+
+# Schemas import
+from dbrx_api.schemas.schemas import CreatePipelineRequest
+
+# Jobs SDK import
+from dbrx_api.jobs.dbrx_schedule import list_schedules
+
+# Delta Sharing import
+from dbrx_api.dltshr.share import get_shares
+```
+
+### Test Mocking Patterns
+```python
+# Mock route dependencies
+with patch("dbrx_api.routes.routes_schedule.list_schedules_sdk") as mock:
+    mock.return_value = (schedules, None)
+
+# Mock SDK functions
+with patch("dbrx_api.jobs.dbrx_pipelines.get_pipeline_by_name") as mock:
+    mock.return_value = pipeline
+```

@@ -1,0 +1,239 @@
+---
+description: Python backend patterns for FastAPI, Pydantic, and async programming
+globs:
+  - "api_layer/**/*.py"
+---
+
+# Python Backend Standards
+
+## FastAPI Application Factory
+
+Always use the application factory pattern for creating FastAPI apps:
+
+```python
+from fastapi import FastAPI
+from dbrx_api.settings import Settings
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Create a FastAPI application with dependency injection."""
+    settings = settings or Settings()
+
+    app = FastAPI(
+        title="Delta Share API",
+        version="v1",
+        docs_url="/",
+        generate_unique_id_function=custom_generate_unique_id,
+    )
+    app.state.settings = settings
+
+    # Include routers
+    app.include_router(ROUTER_SHARE)
+    app.include_router(ROUTER_RECIPIENT)
+
+    # Add exception handlers
+    app.add_exception_handler(pydantic.ValidationError, handle_pydantic_validation_errors)
+    app.middleware("http")(handle_broad_exceptions)
+
+    return app
+```
+
+## Pydantic Settings
+
+Use `pydantic_settings.BaseSettings` for configuration management:
+
+```python
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    """Application settings with environment variable support."""
+
+    # Database
+    database_url: str
+    database_pool_size: int = 5
+
+    # Databricks
+    dltshr_workspace_url: str
+
+    # Azure AD
+    azure_tenant_id: str
+    azure_client_id: str
+
+    model_config = SettingsConfigDict(
+        case_sensitive=False,
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
+```
+
+## Router Organization
+
+Organize routers by domain with consistent naming:
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, status
+
+ROUTER_SHARE = APIRouter(tags=["Shares"], prefix="/shares")
+
+@ROUTER_SHARE.get(
+    "/{share_name}",
+    response_model=ShareInfo,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Share not found"},
+    },
+)
+async def get_share_by_name(
+    share_name: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> ShareInfo:
+    """Retrieve detailed information for a specific Delta Sharing share."""
+    ...
+```
+
+## Dependency Injection
+
+Use FastAPI's `Depends()` for all dependencies:
+
+```python
+from fastapi import Depends, Request
+
+def get_settings(request: Request) -> Settings:
+    """Get settings from app state."""
+    return request.app.state.settings
+
+def get_db_session(request: Request) -> AsyncSession:
+    """Get database session from request state."""
+    return request.state.db_session
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    settings: Settings = Depends(get_settings),
+) -> User:
+    """Validate JWT and return current user."""
+    ...
+```
+
+## Pydantic Schemas
+
+Define request/response schemas with proper validation:
+
+```python
+from datetime import datetime
+from typing import List, Optional
+from pydantic import BaseModel, field_validator
+
+class GetSharesQueryParams(BaseModel):
+    """Query parameters for listing shares."""
+
+    prefix: Optional[str] = None
+    page_size: Optional[int] = 100
+
+    @field_validator("page_size")
+    @classmethod
+    def validate_page_size(cls, v: int | None) -> int | None:
+        """Validate that page_size is greater than 0."""
+        if v is not None and v <= 0:
+            raise ValueError("page_size must be greater than 0")
+        return v
+
+class ShareResponse(BaseModel):
+    """Standard response wrapper for share operations."""
+
+    message: str
+    data: ShareInfo | None = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "message": "Share created successfully",
+                "data": {"name": "my_share", "owner": "user@example.com"}
+            }
+        }
+```
+
+## Async/Await Patterns
+
+Always use async for I/O operations:
+
+```python
+# DO: Use async for database operations
+async def get_share(share_name: str, db: AsyncSession) -> Share | None:
+    result = await db.execute(select(Share).where(Share.name == share_name))
+    return result.scalar_one_or_none()
+
+# DO: Use async for external API calls
+async def fetch_databricks_shares(client: WorkspaceClient) -> list[ShareInfo]:
+    return await asyncio.to_thread(client.shares.list_shares)
+
+# DON'T: Block the event loop with sync calls
+def get_share_sync(share_name: str, db: Session) -> Share:  # BAD
+    return db.query(Share).filter(Share.name == share_name).first()
+```
+
+## Error Handling
+
+Use structured error responses:
+
+```python
+from fastapi import HTTPException, status
+from fastapi.responses import JSONResponse
+
+# Raise HTTPException for client errors
+if not share:
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Share not found: {share_name}",
+    )
+
+# Use middleware for unexpected errors
+async def handle_broad_exceptions(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        logger.exception("Unhandled exception")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+        )
+```
+
+## Type Hints
+
+Always use type hints for function signatures:
+
+```python
+from typing import List, Optional, Union
+from collections.abc import Sequence
+
+# Use modern Python 3.10+ syntax
+def process_shares(
+    shares: list[ShareInfo],
+    filter_prefix: str | None = None,
+) -> list[ShareInfo]:
+    ...
+
+# Use Optional only for None defaults
+def get_share(
+    name: str,
+    include_details: bool = False,
+) -> ShareInfo | None:
+    ...
+```
+
+## DO
+
+- Use `async def` for all route handlers
+- Use Pydantic models for request/response validation
+- Use `Depends()` for dependency injection
+- Use type hints on all function signatures
+- Use `status.HTTP_*` constants for status codes
+- Document endpoints with docstrings (shown in OpenAPI)
+
+## DON'T
+
+- Use global state for configuration
+- Use sync I/O in async contexts
+- Return raw dictionaries (use Pydantic models)
+- Catch broad exceptions without re-raising
+- Use `Any` type when a specific type is known
+- Mix sync and async database sessions

@@ -1,0 +1,126 @@
+---
+description: DeltaShare Enterprise MVP - Project overview, architecture, and monorepo structure
+alwaysApply: true
+---
+
+# DeltaShare Enterprise Application
+
+## Project Overview
+
+DeltaShare is an enterprise MVP application that enables data engineering teams to share Databricks assets (tables, views, streaming tables, materialized views, and notebooks) with internal and external clients. Clients may or may not have Databricks in their infrastructure.
+
+## Tech Stack
+
+### Backend (Phase 1 - Current)
+- **Language**: Python 3.12+
+- **Framework**: FastAPI with Pydantic for validation
+- **Databricks**: Delta Sharing API, DLT Pipelines, Jobs API
+- **Cloud**: Azure Web App, Azure Service Plan
+- **Authentication**: Azure AD / Entra ID (OAuth2)
+- **Logging**: Azure Blob Storage, PostgreSQL
+
+### Frontend (Phase 2 - Planned)
+- **Framework**: Next.js 14+ with React 18+
+- **UI Library**: shadcn/ui components
+- **Styling**: Tailwind CSS
+- **Location**: `web/` directory at repository root
+
+## Monorepo Structure
+
+```
+JLLT-EDP-DeltaShare/
+├── .cursor/rules/              # Cursor AI rules (modular)
+├── .github/workflows/          # CI/CD pipelines
+├── api_layer/                  # Backend API (FastAPI)
+│   ├── src/dbrx_api/
+│   │   ├── routes/             # API route handlers
+│   │   │   ├── routes_health.py
+│   │   │   ├── routes_pipelines.py
+│   │   │   ├── routes_recipient.py
+│   │   │   ├── routes_schedule.py
+│   │   │   └── routes_share.py
+│   │   ├── schemas/            # Pydantic models
+│   │   │   └── schemas.py
+│   │   ├── jobs/               # Databricks Jobs/Pipelines SDK
+│   │   │   ├── dbrx_pipelines.py
+│   │   │   └── dbrx_schedule.py
+│   │   ├── dltshr/             # Delta Sharing SDK
+│   │   │   ├── share.py
+│   │   │   └── recipient.py
+│   │   ├── dbrx_auth/          # Databricks authentication
+│   │   │   ├── token_gen.py
+│   │   │   └── token_manager.py
+│   │   ├── monitoring/         # Logging and observability
+│   │   ├── main.py             # FastAPI app factory
+│   │   ├── settings.py         # Configuration
+│   │   ├── dependencies.py     # FastAPI dependencies
+│   │   └── errors.py           # Exception handlers
+│   ├── tests/
+│   │   ├── unit_tests/         # Unit tests (50+ tests, 99%+ coverage)
+│   │   ├── fixtures/           # Test fixtures
+│   │   └── conftest.py
+│   └── pyproject.toml
+├── web/                        # Frontend (Phase 2)
+├── config.json                 # Project configuration
+├── apilayer_config.json        # Environment-specific API config
+└── databricks_config.json      # Databricks workspace configuration
+```
+
+## Environments
+
+| Environment | Purpose | Azure Resource Naming |
+|-------------|---------|----------------------|
+| `dev` | Development and testing | `*-dev-*` |
+| `uat` | User acceptance testing | `*-uat-*` |
+| `prd` | Production | `*-prd-*` |
+
+Environment-specific settings are managed via:
+1. `apilayer_config.json` - API layer sizing and scaling
+2. Pydantic Settings with environment variable overrides
+3. Azure App Configuration for secrets
+
+## Key Architectural Decisions
+
+1. **Layered Architecture**: Routes → Services → SDK
+2. **Dependency Injection**: FastAPI's `Depends()` for loose coupling
+3. **Modular Routes**: Each domain in separate route file under `routes/`
+4. **Centralized Schemas**: All Pydantic models in `schemas/schemas.py`
+5. **Auto-Pagination**: List endpoints automatically fetch all pages
+6. **Token Caching**: Thread-safe token management with auto-refresh
+
+## API Domains
+
+| Domain | Route File | Description |
+|--------|------------|-------------|
+| Health | `routes_health.py` | Health and readiness checks |
+| Shares | `routes_share.py` | Delta Share management |
+| Recipients | `routes_recipient.py` | Recipient management |
+| Pipelines | `routes_pipelines.py` | DLT Pipeline operations |
+| Schedules | `routes_schedule.py` | Job scheduling |
+
+## Project Links
+
+| Resource | URL |
+|----------|-----|
+| Confluence | [Delta Share Documentation](https://jlldigitalproductengineering.atlassian.net/wiki/spaces/DP/pages/20491567149/Enterprise+Delta+Share+Application) |
+| GitHub | [JLLT-EDP-DeltaShare](https://github.com/JLLT-Apps/JLLT-EDP-DeltaShare) |
+| API Status | [Dev Status](https://jlldigitalproductengineering.atlassian.net/wiki/spaces/DP/pages/20587970637/API+Dev+Status) |
+
+## DO
+
+- Follow the layered architecture pattern
+- Put route handlers in `routes/` directory
+- Put Pydantic models in `schemas/` directory
+- Use async functions for all external API calls
+- Use Pydantic models for all request/response validation
+- Document all API endpoints with OpenAPI descriptions
+- Write tests for new endpoints (aim for 95%+ coverage)
+
+## DON'T
+
+- Put business logic in route handlers
+- Create new schema files (use `schemas/schemas.py`)
+- Hardcode configuration values
+- Skip input validation
+- Create circular imports between layers
+- Use synchronous calls for I/O operations

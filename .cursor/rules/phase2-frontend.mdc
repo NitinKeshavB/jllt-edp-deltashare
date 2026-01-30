@@ -1,0 +1,404 @@
+---
+description: Phase 2 frontend development standards for Next.js, React, shadcn/ui, and Tailwind CSS
+globs:
+  - "web/**/*.ts"
+  - "web/**/*.tsx"
+  - "web/**/*.css"
+---
+
+# Phase 2 Frontend Standards (Placeholder)
+
+## Overview
+
+This document outlines the standards for the Phase 2 frontend implementation using Next.js, React, shadcn/ui, and Tailwind CSS. The frontend will be located in the `web/` directory at the repository root.
+
+## Tech Stack
+
+- **Framework**: Next.js 14+ (App Router)
+- **UI Library**: React 18+
+- **Component Library**: shadcn/ui
+- **Styling**: Tailwind CSS
+- **State Management**: TanStack Query (React Query) for server state
+- **Forms**: React Hook Form with Zod validation
+- **Authentication**: NextAuth.js with Azure AD provider
+
+## Project Structure
+
+```
+web/
+├── app/                        # Next.js App Router
+│   ├── (auth)/                 # Auth group routes
+│   │   ├── login/
+│   │   └── logout/
+│   ├── (dashboard)/            # Dashboard group routes
+│   │   ├── shares/
+│   │   ├── recipients/
+│   │   └── settings/
+│   ├── api/                    # API routes (BFF)
+│   ├── layout.tsx
+│   └── page.tsx
+├── components/
+│   ├── ui/                     # shadcn/ui components
+│   ├── forms/                  # Form components
+│   ├── tables/                 # Data table components
+│   └── layout/                 # Layout components
+├── lib/
+│   ├── api/                    # API client functions
+│   ├── auth/                   # Auth utilities
+│   └── utils/                  # Utility functions
+├── hooks/                      # Custom React hooks
+├── types/                      # TypeScript types
+├── styles/
+│   └── globals.css
+├── tailwind.config.ts
+├── next.config.js
+└── package.json
+```
+
+## Component Patterns
+
+### shadcn/ui Components
+
+```tsx
+// components/ui/button.tsx
+// Generated via: npx shadcn-ui@latest add button
+
+import * as React from "react"
+import { Slot } from "@radix-ui/react-slot"
+import { cva, type VariantProps } from "class-variance-authority"
+import { cn } from "@/lib/utils"
+
+const buttonVariants = cva(
+  "inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none ring-offset-background",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        outline: "border border-input hover:bg-accent hover:text-accent-foreground",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        link: "underline-offset-4 hover:underline text-primary",
+      },
+      size: {
+        default: "h-10 py-2 px-4",
+        sm: "h-9 px-3 rounded-md",
+        lg: "h-11 px-8 rounded-md",
+        icon: "h-10 w-10",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  }
+)
+```
+
+### Page Components
+
+```tsx
+// app/(dashboard)/shares/page.tsx
+import { Suspense } from "react"
+import { SharesTable } from "@/components/tables/shares-table"
+import { SharesTableSkeleton } from "@/components/tables/shares-table-skeleton"
+import { CreateShareButton } from "@/components/forms/create-share-button"
+
+export default function SharesPage() {
+  return (
+    <div className="container mx-auto py-6">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold">Shares</h1>
+        <CreateShareButton />
+      </div>
+
+      <Suspense fallback={<SharesTableSkeleton />}>
+        <SharesTable />
+      </Suspense>
+    </div>
+  )
+}
+```
+
+### API Client
+
+```tsx
+// lib/api/shares.ts
+import { Share, ShareCreate, ShareListResponse } from "@/types/share"
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL
+
+export async function getShares(params?: {
+  prefix?: string
+  page?: number
+  pageSize?: number
+}): Promise<ShareListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params?.prefix) searchParams.set("prefix", params.prefix)
+  if (params?.page) searchParams.set("page", String(params.page))
+  if (params?.pageSize) searchParams.set("page_size", String(params.pageSize))
+
+  const response = await fetch(
+    `${API_BASE}/api/v1/shares?${searchParams}`,
+    {
+      headers: {
+        Authorization: `Bearer ${await getAccessToken()}`,
+      },
+    }
+  )
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch shares")
+  }
+
+  return response.json()
+}
+
+export async function createShare(data: ShareCreate): Promise<Share> {
+  const response = await fetch(`${API_BASE}/api/v1/shares`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${await getAccessToken()}`,
+    },
+    body: JSON.stringify(data),
+  })
+
+  if (!response.ok) {
+    const error = await response.json()
+    throw new Error(error.detail || "Failed to create share")
+  }
+
+  return response.json()
+}
+```
+
+### React Query Hooks
+
+```tsx
+// hooks/use-shares.ts
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { getShares, createShare, deleteShare } from "@/lib/api/shares"
+
+export function useShares(params?: { prefix?: string }) {
+  return useQuery({
+    queryKey: ["shares", params],
+    queryFn: () => getShares(params),
+  })
+}
+
+export function useCreateShare() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: createShare,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["shares"] })
+    },
+  })
+}
+
+export function useDeleteShare() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: deleteShare,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["shares"] })
+    },
+  })
+}
+```
+
+## Authentication with NextAuth.js
+
+```tsx
+// lib/auth/options.ts
+import { NextAuthOptions } from "next-auth"
+import AzureADProvider from "next-auth/providers/azure-ad"
+
+export const authOptions: NextAuthOptions = {
+  providers: [
+    AzureADProvider({
+      clientId: process.env.AZURE_AD_CLIENT_ID!,
+      clientSecret: process.env.AZURE_AD_CLIENT_SECRET!,
+      tenantId: process.env.AZURE_AD_TENANT_ID!,
+      authorization: {
+        params: {
+          scope: "openid profile email api://deltashare/.default",
+        },
+      },
+    }),
+  ],
+  callbacks: {
+    async jwt({ token, account }) {
+      if (account) {
+        token.accessToken = account.access_token
+        token.roles = account.roles || []
+      }
+      return token
+    },
+    async session({ session, token }) {
+      session.accessToken = token.accessToken as string
+      session.user.roles = token.roles as string[]
+      return session
+    },
+  },
+}
+```
+
+## Tailwind Configuration
+
+```ts
+// tailwind.config.ts
+import type { Config } from "tailwindcss"
+
+const config: Config = {
+  darkMode: ["class"],
+  content: [
+    "./pages/**/*.{ts,tsx}",
+    "./components/**/*.{ts,tsx}",
+    "./app/**/*.{ts,tsx}",
+  ],
+  theme: {
+    container: {
+      center: true,
+      padding: "2rem",
+      screens: {
+        "2xl": "1400px",
+      },
+    },
+    extend: {
+      colors: {
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
+        primary: {
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
+        },
+        // ... other colors
+      },
+    },
+  },
+  plugins: [require("tailwindcss-animate")],
+}
+
+export default config
+```
+
+## Form Handling
+
+```tsx
+// components/forms/create-share-form.tsx
+"use client"
+
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { z } from "zod"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { useCreateShare } from "@/hooks/use-shares"
+
+const shareSchema = z.object({
+  name: z
+    .string()
+    .min(1, "Name is required")
+    .regex(/^[a-zA-Z0-9_-]+$/, "Invalid characters"),
+  description: z.string().optional(),
+})
+
+type ShareFormData = z.infer<typeof shareSchema>
+
+export function CreateShareForm({ onSuccess }: { onSuccess?: () => void }) {
+  const { mutate, isPending } = useCreateShare()
+
+  const form = useForm<ShareFormData>({
+    resolver: zodResolver(shareSchema),
+  })
+
+  const onSubmit = (data: ShareFormData) => {
+    mutate(data, {
+      onSuccess: () => {
+        form.reset()
+        onSuccess?.()
+      },
+    })
+  }
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <Input
+        placeholder="Share name"
+        {...form.register("name")}
+        error={form.formState.errors.name?.message}
+      />
+      <Input
+        placeholder="Description (optional)"
+        {...form.register("description")}
+      />
+      <Button type="submit" disabled={isPending}>
+        {isPending ? "Creating..." : "Create Share"}
+      </Button>
+    </form>
+  )
+}
+```
+
+## Design Guidelines
+
+### Color Palette
+
+Use CSS variables for theming (dark/light mode support):
+
+```css
+/* styles/globals.css */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    /* ... */
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    /* ... */
+  }
+}
+```
+
+### Responsive Design
+
+Use Tailwind's responsive prefixes:
+
+```tsx
+<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {/* Responsive grid */}
+</div>
+```
+
+## DO
+
+- Use shadcn/ui components for consistency
+- Implement proper loading and error states
+- Use React Query for server state management
+- Follow Next.js 14 App Router conventions
+- Implement proper TypeScript types
+- Use Zod for runtime validation
+- Support dark mode from the start
+
+## DON'T
+
+- Install full component libraries (use shadcn/ui's copy approach)
+- Use client components unnecessarily (prefer Server Components)
+- Store sensitive data in localStorage
+- Skip error boundaries
+- Ignore accessibility (a11y)
+- Use inline styles instead of Tailwind classes

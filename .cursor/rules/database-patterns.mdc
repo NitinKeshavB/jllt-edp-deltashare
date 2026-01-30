@@ -1,0 +1,442 @@
+---
+description: Database patterns for SQLAlchemy 2.0 async with Azure PostgreSQL
+globs:
+  - "api_layer/**/db/**/*.py"
+  - "api_layer/**/models/**/*.py"
+  - "api_layer/**/repositories/**/*.py"
+---
+
+# Database Patterns
+
+## Overview
+
+This project uses SQLAlchemy 2.0 with async support for Azure PostgreSQL. Database access follows the repository pattern for clean separation of concerns.
+
+## Database Configuration
+
+### Connection Setup
+
+```python
+# src/dbrx_api/db/database.py
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from azure.identity import DefaultAzureCredential
+
+from dbrx_api.core.config import Settings
+
+def get_database_url(settings: Settings) -> str:
+    """Build database URL with Azure AD authentication."""
+    if settings.use_azure_ad_auth:
+        # Use Azure AD token for authentication
+        credential = DefaultAzureCredential()
+        token = credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
+        return (
+            f"postgresql+asyncpg://{settings.db_user}:{token.token}"
+            f"@{settings.db_host}:{settings.db_port}/{settings.db_name}"
+        )
+    return settings.database_url
+
+def create_engine(settings: Settings):
+    """Create async SQLAlchemy engine."""
+    return create_async_engine(
+        get_database_url(settings),
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_pre_ping=True,
+        echo=settings.db_echo,
+    )
+
+def create_session_factory(engine) -> async_sessionmaker[AsyncSession]:
+    """Create async session factory."""
+    return async_sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
+```
+
+### Settings Configuration
+
+```python
+# src/dbrx_api/core/config.py
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    """Database settings."""
+
+    # Connection
+    database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/deltashare"
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_name: str = "deltashare"
+    db_user: str = "deltashare_app"
+
+    # Pool settings
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_echo: bool = False
+
+    # Azure AD
+    use_azure_ad_auth: bool = False
+```
+
+## Model Definitions
+
+### Base Model
+
+```python
+# src/dbrx_api/db/models/base.py
+from datetime import datetime
+from typing import Any
+from uuid import uuid4
+
+from sqlalchemy import DateTime, func
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+class Base(DeclarativeBase):
+    """Base class for all models."""
+
+    type_annotation_map = {
+        datetime: DateTime(timezone=True),
+    }
+
+class TimestampMixin:
+    """Mixin for created_at and updated_at timestamps."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+class SoftDeleteMixin:
+    """Mixin for soft delete support."""
+
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.deleted_at is not None
+```
+
+### Domain Models
+
+```python
+# src/dbrx_api/db/models/share.py
+from uuid import UUID, uuid4
+from sqlalchemy import String, ForeignKey, Enum as SQLEnum
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+import enum
+
+from dbrx_api.db.models.base import Base, TimestampMixin, SoftDeleteMixin
+
+class ShareStatus(enum.Enum):
+    ACTIVE = "active"
+    PENDING = "pending"
+    SUSPENDED = "suspended"
+
+class Share(Base, TimestampMixin, SoftDeleteMixin):
+    """Delta Share model."""
+
+    __tablename__ = "shares"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    owner_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+    )
+    status: Mapped[ShareStatus] = mapped_column(
+        SQLEnum(ShareStatus),
+        default=ShareStatus.ACTIVE,
+    )
+    databricks_share_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Relationships
+    owner: Mapped["User"] = relationship("User", back_populates="shares")
+    recipients: Mapped[list["ShareRecipient"]] = relationship(
+        "ShareRecipient",
+        back_populates="share",
+        cascade="all, delete-orphan",
+    )
+```
+
+### User and Role Models
+
+```python
+# src/dbrx_api/db/models/user.py
+from uuid import UUID, uuid4
+from sqlalchemy import String, Boolean, Table, Column, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from dbrx_api.db.models.base import Base, TimestampMixin
+
+# Many-to-many association table for user roles
+user_roles = Table(
+    "user_roles",
+    Base.metadata,
+    Column("user_id", PGUUID(as_uuid=True), ForeignKey("users.id"), primary_key=True),
+    Column("role_id", PGUUID(as_uuid=True), ForeignKey("roles.id"), primary_key=True),
+)
+
+class User(Base, TimestampMixin):
+    """User model."""
+
+    __tablename__ = "users"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    azure_ad_oid: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Relationships
+    roles: Mapped[list["Role"]] = relationship(secondary=user_roles, back_populates="users")
+    shares: Mapped[list["Share"]] = relationship("Share", back_populates="owner")
+
+class Role(Base, TimestampMixin):
+    """Role model for RBAC."""
+
+    __tablename__ = "roles"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(50), unique=True)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Relationships
+    users: Mapped[list["User"]] = relationship(secondary=user_roles, back_populates="roles")
+```
+
+## Repository Pattern
+
+```python
+# src/dbrx_api/db/repositories/base.py
+from typing import Generic, TypeVar, Type
+from uuid import UUID
+
+from sqlalchemy import select, update, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from dbrx_api.db.models.base import Base
+
+ModelType = TypeVar("ModelType", bound=Base)
+
+class BaseRepository(Generic[ModelType]):
+    """Base repository with common CRUD operations."""
+
+    def __init__(self, session: AsyncSession, model: Type[ModelType]):
+        self.session = session
+        self.model = model
+
+    async def get_by_id(self, id: UUID) -> ModelType | None:
+        """Get a single record by ID."""
+        result = await self.session.execute(
+            select(self.model).where(self.model.id == id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_all(self, limit: int = 100, offset: int = 0) -> list[ModelType]:
+        """Get all records with pagination."""
+        result = await self.session.execute(
+            select(self.model).limit(limit).offset(offset)
+        )
+        return list(result.scalars().all())
+
+    async def create(self, obj: ModelType) -> ModelType:
+        """Create a new record."""
+        self.session.add(obj)
+        await self.session.flush()
+        await self.session.refresh(obj)
+        return obj
+
+    async def update(self, id: UUID, **kwargs) -> ModelType | None:
+        """Update a record by ID."""
+        await self.session.execute(
+            update(self.model).where(self.model.id == id).values(**kwargs)
+        )
+        return await self.get_by_id(id)
+
+    async def delete(self, id: UUID) -> bool:
+        """Delete a record by ID."""
+        result = await self.session.execute(
+            delete(self.model).where(self.model.id == id)
+        )
+        return result.rowcount > 0
+```
+
+### Domain Repository
+
+```python
+# src/dbrx_api/db/repositories/share_repository.py
+from uuid import UUID
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from dbrx_api.db.models.share import Share, ShareStatus
+from dbrx_api.db.repositories.base import BaseRepository
+
+class ShareRepository(BaseRepository[Share]):
+    """Repository for Share operations."""
+
+    def __init__(self, session: AsyncSession):
+        super().__init__(session, Share)
+
+    async def get_by_name(self, name: str) -> Share | None:
+        """Get share by name."""
+        result = await self.session.execute(
+            select(Share)
+            .where(Share.name == name)
+            .where(Share.deleted_at.is_(None))
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_owner(self, owner_id: UUID) -> list[Share]:
+        """Get all shares owned by a user."""
+        result = await self.session.execute(
+            select(Share)
+            .where(Share.owner_id == owner_id)
+            .where(Share.deleted_at.is_(None))
+            .options(selectinload(Share.recipients))
+        )
+        return list(result.scalars().all())
+
+    async def get_active_shares(self, prefix: str | None = None) -> list[Share]:
+        """Get all active shares with optional prefix filter."""
+        query = select(Share).where(Share.status == ShareStatus.ACTIVE)
+
+        if prefix:
+            query = query.where(Share.name.startswith(prefix))
+
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
+    async def soft_delete(self, id: UUID) -> bool:
+        """Soft delete a share."""
+        from datetime import datetime, timezone
+        share = await self.get_by_id(id)
+        if share:
+            share.deleted_at = datetime.now(timezone.utc)
+            await self.session.flush()
+            return True
+        return False
+```
+
+## Alembic Migrations
+
+### Setup
+
+```bash
+# Initialize Alembic
+alembic init alembic
+
+# Generate migration
+alembic revision --autogenerate -m "Add shares table"
+
+# Apply migrations
+alembic upgrade head
+
+# Rollback
+alembic downgrade -1
+```
+
+### Migration Example
+
+```python
+# alembic/versions/001_create_shares.py
+"""Create shares table
+
+Revision ID: 001
+"""
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+revision = '001'
+down_revision = None
+
+def upgrade():
+    op.create_table(
+        'shares',
+        sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column('name', sa.String(255), nullable=False, unique=True),
+        sa.Column('description', sa.String(1000), nullable=True),
+        sa.Column('owner_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('status', sa.Enum('active', 'pending', 'suspended', name='share_status')),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
+    )
+    op.create_index('ix_shares_name', 'shares', ['name'])
+
+def downgrade():
+    op.drop_table('shares')
+```
+
+## FastAPI Integration
+
+```python
+# src/dbrx_api/api/v1/dependencies.py
+from typing import AsyncGenerator
+from fastapi import Depends, Request
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    """Get database session for request."""
+    async with request.app.state.session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+def get_share_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> ShareRepository:
+    """Get share repository instance."""
+    return ShareRepository(session)
+```
+
+## DO
+
+- Use async SQLAlchemy 2.0 patterns
+- Use repository pattern for data access
+- Use Alembic for all schema changes
+- Use soft deletes for audit trail
+- Use UUID primary keys
+- Add indexes for frequently queried columns
+- Use transactions for multi-step operations
+
+## DON'T
+
+- Use raw SQL queries (use SQLAlchemy ORM)
+- Commit in repository methods (let the caller handle transactions)
+- Store secrets in migration files
+- Delete data permanently without soft delete first
+- Use auto-incrementing integer IDs (use UUIDs)
+- Skip migrations for schema changes

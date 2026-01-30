@@ -1,0 +1,455 @@
+---
+description: RESTful API design conventions, error handling, and versioning
+globs:
+  - "api_layer/**/routes/**/*.py"
+  - "api_layer/**/schemas/**/*.py"
+---
+
+# API Design Standards
+
+## Overview
+
+DeltaShare API follows RESTful conventions with consistent error handling, versioning, and OpenAPI documentation. This document establishes patterns for API design.
+
+## URL Structure
+
+```
+/api/v1/{resource}/{resource_id}/{sub-resource}
+
+Examples:
+GET    /api/v1/shares                    # List shares
+POST   /api/v1/shares                    # Create share
+GET    /api/v1/shares/{share_name}       # Get share
+DELETE /api/v1/shares/{share_name}       # Delete share
+PUT    /api/v1/shares/{share_name}/dataobject/add    # Add data objects
+GET    /api/v1/shares/{share_name}/recipients        # List share recipients
+```
+
+## HTTP Methods
+
+| Method | Usage | Idempotent | Safe |
+|--------|-------|------------|------|
+| GET | Retrieve resource(s) | Yes | Yes |
+| POST | Create resource | No | No |
+| PUT | Update/replace resource | Yes | No |
+| PATCH | Partial update | Yes | No |
+| DELETE | Remove resource | Yes | No |
+
+## Status Codes
+
+### Success Codes
+
+```python
+from fastapi import status
+
+# 200 OK - Successful GET, PUT, PATCH
+response.status_code = status.HTTP_200_OK
+
+# 201 Created - Successful POST
+response.status_code = status.HTTP_201_CREATED
+
+# 204 No Content - Successful DELETE or empty result
+response.status_code = status.HTTP_204_NO_CONTENT
+```
+
+### Error Codes
+
+```python
+# 400 Bad Request - Invalid input
+raise HTTPException(
+    status_code=status.HTTP_400_BAD_REQUEST,
+    detail="Invalid share name format",
+)
+
+# 401 Unauthorized - Missing or invalid authentication
+raise HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Authentication required",
+)
+
+# 403 Forbidden - Authenticated but not authorized
+raise HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN,
+    detail="Permission denied to access this share",
+)
+
+# 404 Not Found - Resource doesn't exist
+raise HTTPException(
+    status_code=status.HTTP_404_NOT_FOUND,
+    detail=f"Share not found: {share_name}",
+)
+
+# 409 Conflict - Resource already exists
+raise HTTPException(
+    status_code=status.HTTP_409_CONFLICT,
+    detail=f"Share already exists: {share_name}",
+)
+
+# 422 Unprocessable Entity - Validation error
+# (Automatically raised by Pydantic)
+
+# 500 Internal Server Error - Unexpected error
+# (Caught by middleware)
+```
+
+## Request/Response Schemas
+
+### Base Response Schema
+
+```python
+# src/dbrx_api/schemas/base.py
+from datetime import datetime
+from typing import Generic, TypeVar
+from pydantic import BaseModel
+
+T = TypeVar("T")
+
+class APIResponse(BaseModel, Generic[T]):
+    """Standard API response wrapper."""
+
+    success: bool = True
+    message: str
+    data: T | None = None
+    timestamp: datetime = datetime.utcnow()
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    """Paginated response wrapper."""
+
+    items: list[T]
+    total: int
+    page: int
+    page_size: int
+    has_next: bool
+
+    @property
+    def total_pages(self) -> int:
+        return (self.total + self.page_size - 1) // self.page_size
+
+class ErrorResponse(BaseModel):
+    """Standard error response."""
+
+    success: bool = False
+    error: str
+    detail: str | None = None
+    code: str | None = None
+```
+
+### Resource Schemas
+
+```python
+# src/dbrx_api/schemas/share.py
+from datetime import datetime
+from typing import List, Optional
+from uuid import UUID
+from pydantic import BaseModel, Field, field_validator
+
+class ShareBase(BaseModel):
+    """Base share schema."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=1000)
+
+class ShareCreate(ShareBase):
+    """Schema for creating a share."""
+
+    storage_root: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate share name format."""
+        import re
+        if not re.match(r"^[a-zA-Z0-9_-]+$", v):
+            raise ValueError(
+                "Name must contain only alphanumeric characters, "
+                "underscores, and hyphens"
+            )
+        return v
+
+class ShareUpdate(BaseModel):
+    """Schema for updating a share."""
+
+    description: Optional[str] = None
+
+class ShareResponse(ShareBase):
+    """Schema for share response."""
+
+    id: UUID
+    owner: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class ShareListResponse(BaseModel):
+    """Response for listing shares."""
+
+    message: str
+    shares: List[ShareResponse]
+    total: int
+```
+
+### Query Parameters
+
+```python
+# src/dbrx_api/schemas/query.py
+from typing import Optional
+from pydantic import BaseModel, Field, field_validator
+
+class PaginationParams(BaseModel):
+    """Standard pagination parameters."""
+
+    page: int = Field(1, ge=1, description="Page number")
+    page_size: int = Field(20, ge=1, le=100, description="Items per page")
+
+    @property
+    def offset(self) -> int:
+        return (self.page - 1) * self.page_size
+
+class ShareQueryParams(PaginationParams):
+    """Query parameters for listing shares."""
+
+    prefix: Optional[str] = Field(None, description="Filter by name prefix")
+    status: Optional[str] = Field(None, description="Filter by status")
+    owner: Optional[str] = Field(None, description="Filter by owner")
+
+    @field_validator("page_size")
+    @classmethod
+    def validate_page_size(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("page_size must be greater than 0")
+        return min(v, 100)  # Cap at 100
+```
+
+## Router Organization
+
+```python
+# src/dbrx_api/api/v1/routes/shares.py
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
+
+from dbrx_api.schemas.share import (
+    ShareCreate,
+    ShareResponse,
+    ShareListResponse,
+)
+from dbrx_api.schemas.query import ShareQueryParams
+
+router = APIRouter(prefix="/shares", tags=["Shares"])
+
+@router.get(
+    "",
+    response_model=ShareListResponse,
+    summary="List all shares",
+    description="Retrieve all Delta Sharing shares with optional filtering and pagination.",
+    responses={
+        status.HTTP_200_OK: {
+            "description": "Shares fetched successfully",
+            "model": ShareListResponse,
+        },
+        status.HTTP_204_NO_CONTENT: {
+            "description": "No shares found",
+        },
+    },
+)
+async def list_shares(
+    params: ShareQueryParams = Depends(),
+) -> ShareListResponse:
+    """List all Delta Sharing shares with optional prefix filtering."""
+    ...
+
+@router.get(
+    "/{share_name}",
+    response_model=ShareResponse,
+    summary="Get share by name",
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Share not found",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Share not found: my_share"}
+                }
+            },
+        },
+    },
+)
+async def get_share(share_name: str) -> ShareResponse:
+    """Retrieve detailed information for a specific Delta Sharing share."""
+    ...
+
+@router.post(
+    "",
+    response_model=ShareResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new share",
+    responses={
+        status.HTTP_409_CONFLICT: {
+            "description": "Share already exists",
+        },
+    },
+)
+async def create_share(share_data: ShareCreate) -> ShareResponse:
+    """Create a new Delta Sharing share."""
+    ...
+```
+
+## Error Handling
+
+### Custom Exception Handler
+
+```python
+# src/dbrx_api/core/errors.py
+from fastapi import Request, status
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
+
+async def handle_pydantic_validation_errors(
+    request: Request,
+    exc: ValidationError,
+) -> JSONResponse:
+    """Handle Pydantic validation errors with readable messages."""
+    errors = []
+    for error in exc.errors():
+        field = ".".join(str(loc) for loc in error["loc"])
+        errors.append({
+            "field": field,
+            "message": error["msg"],
+            "type": error["type"],
+        })
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "success": False,
+            "error": "Validation Error",
+            "detail": errors,
+        },
+    )
+
+async def handle_request_validation_error(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    """Handle FastAPI request validation errors."""
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "success": False,
+            "error": "Request Validation Error",
+            "detail": exc.errors(),
+        },
+    )
+
+async def handle_broad_exceptions(request: Request, call_next):
+    """Middleware to catch unhandled exceptions."""
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        # Log the exception
+        import logging
+        logging.exception("Unhandled exception")
+
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "success": False,
+                "error": "Internal Server Error",
+                "detail": "An unexpected error occurred",
+            },
+        )
+```
+
+## API Versioning
+
+```python
+# src/dbrx_api/api/__init__.py
+from fastapi import APIRouter
+
+from dbrx_api.api.v1 import router as v1_router
+
+api_router = APIRouter()
+api_router.include_router(v1_router, prefix="/api/v1")
+
+# Future versions
+# api_router.include_router(v2_router, prefix="/api/v2")
+```
+
+```python
+# src/dbrx_api/api/v1/__init__.py
+from fastapi import APIRouter
+
+from dbrx_api.api.v1.routes import shares, recipients, health
+
+router = APIRouter()
+router.include_router(shares.router)
+router.include_router(recipients.router)
+router.include_router(health.router)
+```
+
+## OpenAPI Documentation
+
+```python
+# src/dbrx_api/main.py
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+
+def custom_generate_unique_id(route: APIRoute) -> str:
+    """Generate prettier operation IDs for OpenAPI."""
+    if route.tags:
+        return f"{route.tags[0]}-{route.name}"
+    return route.name
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="Delta Share API",
+        summary="API for managing Delta Share recipients and shares.",
+        version="v1",
+        description="""
+## Overview
+
+DeltaShare API enables data engineering teams to share Databricks assets
+with internal and external clients.
+
+## Authentication
+
+All endpoints require Azure AD authentication via Bearer token.
+
+## Rate Limiting
+
+- 100 requests per minute for read operations
+- 20 requests per minute for write operations
+        """,
+        docs_url="/",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+        generate_unique_id_function=custom_generate_unique_id,
+        swagger_ui_parameters={
+            "defaultModelsExpandDepth": -1,
+            "persistAuthorization": True,
+        },
+    )
+    return app
+```
+
+## DO
+
+- Use consistent URL patterns (plural nouns for resources)
+- Return appropriate HTTP status codes
+- Use Pydantic models for all request/response bodies
+- Document all endpoints with summaries and descriptions
+- Include example responses in OpenAPI docs
+- Version APIs from the start (/api/v1/)
+- Use query parameters for filtering and pagination
+
+## DON'T
+
+- Use verbs in URLs (use HTTP methods instead)
+- Return raw error messages from exceptions
+- Mix query parameters with request body for same data
+- Change API behavior without versioning
+- Return 200 for errors
+- Include sensitive data in error responses
+- Use inconsistent naming conventions

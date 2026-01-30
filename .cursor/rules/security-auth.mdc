@@ -1,0 +1,432 @@
+---
+description: Security and authentication patterns for Azure AD/Entra ID and RBAC
+globs:
+  - "api_layer/**/auth/**/*.py"
+  - "api_layer/**/dbrx_auth/**/*.py"
+  - "api_layer/**/core/security.py"
+---
+
+# Security and Authentication Standards
+
+## Overview
+
+DeltaShare uses Azure AD (Entra ID) for authentication with OAuth2 and JWT tokens. Role-based access control (RBAC) is implemented using Azure AD groups mapped to application roles.
+
+## Authentication Flow
+
+```
+1. Client requests access token from Azure AD
+2. Client sends token in Authorization header
+3. API validates token signature and claims
+4. API extracts user info and roles from token
+5. RBAC middleware checks permissions
+6. Request proceeds or is rejected
+```
+
+## Azure AD Configuration
+
+### Settings
+
+```python
+# src/dbrx_api/core/config.py
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    """Azure AD settings."""
+
+    # Azure AD
+    azure_tenant_id: str
+    azure_client_id: str
+    azure_client_secret: str = ""  # For service-to-service auth
+
+    # JWT Validation
+    jwt_algorithm: str = "RS256"
+    jwt_audience: str = ""  # Defaults to client_id
+    jwt_issuer: str = ""    # Auto-constructed from tenant_id
+
+    @property
+    def azure_authority(self) -> str:
+        return f"https://login.microsoftonline.com/{self.azure_tenant_id}"
+
+    @property
+    def azure_jwks_url(self) -> str:
+        return f"{self.azure_authority}/discovery/v2.0/keys"
+```
+
+## JWT Token Validation
+
+```python
+# src/dbrx_api/core/auth.py
+from datetime import datetime
+from typing import Any
+import httpx
+from jose import jwt, JWTError
+from fastapi import HTTPException, status, Depends
+from fastapi.security import OAuth2AuthorizationCodeBearer
+
+from dbrx_api.core.config import Settings, get_settings
+
+oauth2_scheme = OAuth2AuthorizationCodeBearer(
+    authorizationUrl=f"https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    tokenUrl=f"https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    auto_error=True,
+)
+
+class TokenValidator:
+    """Validates Azure AD JWT tokens."""
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self._jwks_cache: dict[str, Any] | None = None
+        self._jwks_cache_time: datetime | None = None
+
+    async def get_jwks(self) -> dict[str, Any]:
+        """Fetch and cache JWKS from Azure AD."""
+        # Cache for 1 hour
+        if self._jwks_cache and self._jwks_cache_time:
+            if (datetime.utcnow() - self._jwks_cache_time).seconds < 3600:
+                return self._jwks_cache
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(self.settings.azure_jwks_url)
+            self._jwks_cache = response.json()
+            self._jwks_cache_time = datetime.utcnow()
+            return self._jwks_cache
+
+    async def validate_token(self, token: str) -> dict[str, Any]:
+        """Validate JWT token and return claims."""
+        try:
+            jwks = await self.get_jwks()
+
+            # Decode without verification to get header
+            unverified = jwt.get_unverified_header(token)
+
+            # Find matching key
+            key = next(
+                (k for k in jwks["keys"] if k["kid"] == unverified["kid"]),
+                None,
+            )
+            if not key:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token signing key not found",
+                )
+
+            # Verify and decode
+            claims = jwt.decode(
+                token,
+                key,
+                algorithms=[self.settings.jwt_algorithm],
+                audience=self.settings.azure_client_id,
+                issuer=f"https://login.microsoftonline.com/{self.settings.azure_tenant_id}/v2.0",
+            )
+
+            return claims
+
+        except JWTError as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid token: {str(e)}",
+            )
+
+# Dependency
+async def get_token_validator(
+    settings: Settings = Depends(get_settings),
+) -> TokenValidator:
+    return TokenValidator(settings)
+```
+
+## User Model and Current User
+
+```python
+# src/dbrx_api/core/auth.py (continued)
+from pydantic import BaseModel
+from uuid import UUID
+
+class CurrentUser(BaseModel):
+    """Current authenticated user."""
+
+    id: UUID | None = None  # From database if exists
+    azure_oid: str          # Azure AD Object ID
+    email: str
+    display_name: str
+    roles: list[str] = []
+    groups: list[str] = []
+
+    def has_role(self, role: str) -> bool:
+        """Check if user has a specific role."""
+        return role in self.roles
+
+    def has_any_role(self, roles: list[str]) -> bool:
+        """Check if user has any of the specified roles."""
+        return any(role in self.roles for role in roles)
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    validator: TokenValidator = Depends(get_token_validator),
+) -> CurrentUser:
+    """Extract and validate current user from JWT token."""
+    claims = await validator.validate_token(token)
+
+    return CurrentUser(
+        azure_oid=claims.get("oid", ""),
+        email=claims.get("preferred_username", claims.get("email", "")),
+        display_name=claims.get("name", ""),
+        roles=claims.get("roles", []),
+        groups=claims.get("groups", []),
+    )
+```
+
+## Role-Based Access Control (RBAC)
+
+### Role Definitions
+
+```python
+# src/dbrx_api/core/security.py
+from enum import Enum
+from typing import Callable
+from functools import wraps
+
+from fastapi import HTTPException, status, Depends
+
+class Role(str, Enum):
+    """Application roles mapped to Azure AD groups."""
+
+    SUPER_ADMIN = "DeltaShare.SuperAdmin"
+    ORG_ADMIN = "DeltaShare.OrgAdmin"
+    DATA_STEWARD = "DeltaShare.DataSteward"
+    RECIPIENT_MANAGER = "DeltaShare.RecipientManager"
+    VIEWER = "DeltaShare.Viewer"
+    AUDITOR = "DeltaShare.Auditor"
+
+# Role hierarchy - higher roles include lower role permissions
+ROLE_HIERARCHY = {
+    Role.SUPER_ADMIN: [Role.ORG_ADMIN, Role.DATA_STEWARD, Role.RECIPIENT_MANAGER, Role.VIEWER, Role.AUDITOR],
+    Role.ORG_ADMIN: [Role.DATA_STEWARD, Role.RECIPIENT_MANAGER, Role.VIEWER],
+    Role.DATA_STEWARD: [Role.VIEWER],
+    Role.RECIPIENT_MANAGER: [Role.VIEWER],
+    Role.AUDITOR: [Role.VIEWER],
+    Role.VIEWER: [],
+}
+
+def get_effective_roles(roles: list[str]) -> set[str]:
+    """Get all effective roles including inherited roles."""
+    effective = set(roles)
+    for role in roles:
+        try:
+            role_enum = Role(role)
+            effective.update(r.value for r in ROLE_HIERARCHY.get(role_enum, []))
+        except ValueError:
+            continue
+    return effective
+```
+
+### Permission Decorators
+
+```python
+# src/dbrx_api/core/security.py (continued)
+from dbrx_api.core.auth import CurrentUser, get_current_user
+
+def require_roles(*required_roles: Role):
+    """Decorator to require specific roles for an endpoint."""
+
+    async def role_checker(
+        current_user: CurrentUser = Depends(get_current_user),
+    ) -> CurrentUser:
+        effective_roles = get_effective_roles(current_user.roles)
+
+        if not any(role.value in effective_roles for role in required_roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Required role(s): {[r.value for r in required_roles]}",
+            )
+
+        return current_user
+
+    return role_checker
+
+def require_any_role(*required_roles: Role):
+    """Require any one of the specified roles."""
+    return require_roles(*required_roles)
+
+def require_all_roles(*required_roles: Role):
+    """Require all of the specified roles."""
+
+    async def role_checker(
+        current_user: CurrentUser = Depends(get_current_user),
+    ) -> CurrentUser:
+        effective_roles = get_effective_roles(current_user.roles)
+
+        if not all(role.value in effective_roles for role in required_roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Required all roles: {[r.value for r in required_roles]}",
+            )
+
+        return current_user
+
+    return role_checker
+```
+
+### Using RBAC in Routes
+
+```python
+# src/dbrx_api/api/v1/routes/shares.py
+from fastapi import APIRouter, Depends
+from dbrx_api.core.security import Role, require_roles
+from dbrx_api.core.auth import CurrentUser
+
+router = APIRouter(prefix="/shares", tags=["Shares"])
+
+@router.get("/")
+async def list_shares(
+    current_user: CurrentUser = Depends(require_roles(Role.VIEWER)),
+):
+    """List all shares - requires Viewer role or higher."""
+    ...
+
+@router.post("/")
+async def create_share(
+    current_user: CurrentUser = Depends(require_roles(Role.DATA_STEWARD)),
+):
+    """Create a share - requires Data Steward role or higher."""
+    ...
+
+@router.delete("/{share_id}")
+async def delete_share(
+    share_id: str,
+    current_user: CurrentUser = Depends(require_roles(Role.ORG_ADMIN)),
+):
+    """Delete a share - requires Org Admin role or higher."""
+    ...
+
+@router.get("/audit-logs")
+async def get_audit_logs(
+    current_user: CurrentUser = Depends(require_roles(Role.AUDITOR)),
+):
+    """Get audit logs - requires Auditor role."""
+    ...
+```
+
+## Resource-Level Authorization
+
+```python
+# src/dbrx_api/core/security.py (continued)
+
+async def check_share_ownership(
+    share_id: UUID,
+    current_user: CurrentUser,
+    share_repo: ShareRepository,
+) -> Share:
+    """Check if user owns or has access to a share."""
+    share = await share_repo.get_by_id(share_id)
+
+    if not share:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Share not found: {share_id}",
+        )
+
+    # Super admins can access any share
+    if Role.SUPER_ADMIN.value in current_user.roles:
+        return share
+
+    # Check ownership
+    if share.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this share",
+        )
+
+    return share
+```
+
+## API Key Authentication (Service-to-Service)
+
+```python
+# src/dbrx_api/core/auth.py (continued)
+from fastapi.security import APIKeyHeader
+import secrets
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def get_api_key_user(
+    api_key: str | None = Depends(api_key_header),
+    settings: Settings = Depends(get_settings),
+) -> CurrentUser | None:
+    """Validate API key for service accounts."""
+    if not api_key:
+        return None
+
+    # Validate against stored API keys (in database or config)
+    # This is a simplified example
+    if not secrets.compare_digest(api_key, settings.service_api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
+
+    return CurrentUser(
+        azure_oid="service-account",
+        email="service@deltashare.internal",
+        display_name="Service Account",
+        roles=[Role.DATA_STEWARD.value],
+    )
+
+async def get_current_user_or_service(
+    jwt_user: CurrentUser | None = Depends(get_current_user),
+    api_key_user: CurrentUser | None = Depends(get_api_key_user),
+) -> CurrentUser:
+    """Accept either JWT or API key authentication."""
+    user = jwt_user or api_key_user
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+    return user
+```
+
+## Security Headers Middleware
+
+```python
+# src/dbrx_api/core/middleware.py
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # Security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        return response
+```
+
+## DO
+
+- Always validate JWT tokens from Azure AD
+- Use role-based access control for all endpoints
+- Check resource ownership for sensitive operations
+- Use HTTPS in production
+- Implement security headers middleware
+- Log authentication failures
+- Use secrets.compare_digest for timing-safe comparisons
+
+## DON'T
+
+- Store sensitive data in JWT claims
+- Trust client-provided user information
+- Hardcode API keys or secrets
+- Skip authorization checks
+- Return detailed error messages about auth failures
+- Use symmetric JWT signing in production
+- Allow CORS from all origins

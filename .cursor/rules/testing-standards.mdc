@@ -1,0 +1,297 @@
+---
+description: Testing standards with pytest, coverage reports, and mocking patterns
+globs:
+  - "api_layer/tests/**/*.py"
+  - "**/test_*.py"
+  - "**/*_test.py"
+---
+
+# Testing Standards
+
+## Overview
+
+This project uses pytest for testing with coverage reporting. Tests are organized into unit tests and integration tests, with fixtures managed through conftest.py.
+
+## Test Directory Structure
+
+```
+api_layer/tests/
+├── __init__.py
+├── conftest.py              # Global fixtures and pytest plugins
+├── consts.py                # Test constants
+├── fixtures/                # Shared test fixtures
+│   ├── __init__.py
+│   ├── app_fixtures.py
+│   ├── databricks_fixtures.py
+│   ├── pipeline_fixtures.py
+│   ├── schedule_fixtures.py
+│   └── business_logic_fixtures.py
+├── unit_tests/              # Unit tests (50+ tests, 99%+ coverage)
+│   ├── __init__.py
+│   ├── test_routes_health.py
+│   ├── test_routes_pipelines.py
+│   ├── test_routes_recipient.py
+│   ├── test_routes_schedule.py
+│   └── test_routes_share.py
+└── integration_tests/       # Integration tests (slower, external deps)
+    └── __init__.py
+```
+
+## Test Naming Conventions
+
+```python
+# File naming: test__<module_name>.py
+# tests/unit_tests/test__share.py
+
+# Function naming: test__<function_name>__<scenario>
+def test__get_shares__returns_share_when_exists():
+    ...
+
+def test__get_shares__returns_none_when_not_found():
+    ...
+
+def test__create_share__raises_on_duplicate_name():
+    ...
+```
+
+## Pytest Configuration
+
+From `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+```
+
+## Writing Unit Tests
+
+```python
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from dbrx_api.dltshr.share import get_shares, create_share
+
+class TestGetShares:
+    """Tests for the get_shares function."""
+
+    def test__get_shares__returns_share_info_when_found(self):
+        """Should return ShareInfo when share exists."""
+        # Arrange
+        mock_client = MagicMock()
+        mock_client.shares.get.return_value = ShareInfo(name="test_share")
+
+        with patch("dbrx_api.dltshr.share.WorkspaceClient", return_value=mock_client):
+            # Act
+            result = get_shares("test_share", "https://workspace.url")
+
+        # Assert
+        assert result is not None
+        assert result.name == "test_share"
+
+    def test__get_shares__returns_none_when_not_found(self):
+        """Should return None when share doesn't exist."""
+        mock_client = MagicMock()
+        mock_client.shares.get.side_effect = Exception("does not exist")
+
+        with patch("dbrx_api.dltshr.share.WorkspaceClient", return_value=mock_client):
+            result = get_shares("nonexistent", "https://workspace.url")
+
+        assert result is None
+```
+
+## Async Test Patterns
+
+```python
+import pytest
+from httpx import AsyncClient
+from dbrx_api.main import create_app
+
+@pytest.mark.asyncio
+async def test__list_shares__returns_200_with_shares():
+    """Test listing shares returns correct response."""
+    app = create_app()
+
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        response = await client.get("/shares")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "Share" in data
+```
+
+## Fixtures
+
+Register fixtures in `conftest.py`:
+
+```python
+# tests/conftest.py
+import sys
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+THIS_DIR = Path(__file__).parent
+TESTS_DIR_PARENT = (THIS_DIR / "..").resolve()
+sys.path.insert(0, str(TESTS_DIR_PARENT))
+
+pytest_plugins = [
+    "tests.fixtures.example_fixture",
+    "tests.fixtures.database_fixture",
+]
+
+@pytest.fixture
+def test_settings():
+    """Provide test settings with mocked values."""
+    return Settings(
+        dltshr_workspace_url="https://test.azuredatabricks.net/",
+        database_url="postgresql+asyncpg://test:test@localhost/test",
+    )
+
+@pytest.fixture
+def test_client(test_settings):
+    """Create a test client with test settings."""
+    app = create_app(settings=test_settings)
+    return TestClient(app)
+
+@pytest.fixture
+async def async_test_client(test_settings):
+    """Create an async test client."""
+    from httpx import AsyncClient
+    app = create_app(settings=test_settings)
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+```
+
+## Mocking Databricks SDK
+
+```python
+# tests/fixtures/databricks_fixture.py
+import pytest
+from unittest.mock import MagicMock, patch
+from databricks.sdk.service.sharing import ShareInfo, RecipientInfo
+
+@pytest.fixture
+def mock_workspace_client():
+    """Mock Databricks WorkspaceClient."""
+    with patch("dbrx_api.dltshr.share.WorkspaceClient") as mock_cls:
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+
+        # Configure default behaviors
+        mock_client.shares.list_shares.return_value = [
+            ShareInfo(name="share_1"),
+            ShareInfo(name="share_2"),
+        ]
+        mock_client.shares.get.return_value = ShareInfo(name="test_share")
+
+        yield mock_client
+
+@pytest.fixture
+def mock_auth_token():
+    """Mock authentication token generation."""
+    with patch("dbrx_api.dbrx_auth.token_gen.get_auth_token") as mock:
+        mock.return_value = ("mock_token", 3600)
+        yield mock
+```
+
+## Database Testing
+
+```python
+import pytest
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+
+@pytest.fixture
+async def test_db_session():
+    """Create a test database session with rollback."""
+    engine = create_async_engine(
+        "postgresql+asyncpg://test:test@localhost/test_db",
+        echo=True,
+    )
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with async_session() as session:
+        async with session.begin():
+            yield session
+            await session.rollback()  # Rollback after each test
+```
+
+## Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run with coverage
+pytest --cov=src --cov-report=html --cov-report=term
+
+# Run quick tests (skip slow markers)
+make test-quick
+
+# Run specific test file
+pytest tests/unit_tests/test__share.py
+
+# Run with verbose output
+pytest -v -s
+
+# Run tests matching pattern
+pytest -k "test__get_shares"
+```
+
+## Coverage Requirements
+
+```bash
+# Minimum coverage threshold (from run.sh)
+MINIMUM_TEST_COVERAGE_PERCENT=0  # Set to 80 for production
+
+# Generate coverage report
+pytest --cov=src --cov-fail-under=80 --cov-report=html
+```
+
+## Markers
+
+```python
+import pytest
+
+@pytest.mark.slow
+def test__integration_with_databricks():
+    """This test is slow due to external API calls."""
+    ...
+
+@pytest.mark.asyncio
+async def test__async_database_operation():
+    """This test uses async operations."""
+    ...
+
+@pytest.mark.parametrize("share_name,expected", [
+    ("valid_share", True),
+    ("", False),
+    ("invalid name!", False),
+])
+def test__validate_share_name(share_name, expected):
+    """Test share name validation with multiple inputs."""
+    result = validate_share_name(share_name)
+    assert result == expected
+```
+
+## DO
+
+- Write at least one test per public function
+- Use descriptive test names with double underscores
+- Test both success and failure paths
+- Mock external dependencies (Databricks, database)
+- Use fixtures for reusable test setup
+- Keep unit tests fast (< 100ms each)
+- Aim for 80%+ code coverage
+
+## DON'T
+
+- Test private implementation details
+- Make real API calls in unit tests
+- Share state between tests
+- Use `time.sleep()` in tests (use mocks)
+- Skip tests without a documented reason
+- Write tests that depend on execution order

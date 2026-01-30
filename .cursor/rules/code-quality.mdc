@@ -1,0 +1,257 @@
+---
+description: Code quality standards using black, isort, flake8, pylint, and mypy
+alwaysApply: true
+---
+
+# Code Quality Standards
+
+## Overview
+
+This project enforces code quality through automated tools configured in `api_layer/pyproject.toml` and `.pre-commit-config.yaml`. All code must pass these checks before committing.
+
+## Tool Configuration
+
+### Black (Code Formatting)
+
+```toml
+[tool.black]
+line-length = 119
+exclude = '''
+/(
+    \.venv
+  | venv
+)/
+'''
+```
+
+**Key Rules:**
+- Maximum line length: 119 characters
+- Use double quotes for strings
+- Trailing commas in multi-line structures
+
+### isort (Import Sorting)
+
+```toml
+[tool.isort]
+profile = "black"
+multi_line_output = "VERTICAL_HANGING_INDENT"
+force_grid_wrap = 2
+line_length = 119
+```
+
+**Import Order:**
+1. Standard library imports
+2. Third-party imports
+3. Local application imports
+
+```python
+# Correct import ordering
+import os
+from datetime import (
+    datetime,
+    timezone,
+)
+from typing import (
+    List,
+    Optional,
+)
+
+from databricks.sdk import WorkspaceClient
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+)
+from pydantic import BaseModel
+
+from dbrx_api.settings import Settings
+from dbrx_api.dltshr.share import get_shares
+```
+
+### Flake8 (Linting)
+
+```toml
+[tool.flake8]
+docstring-convention = "all"
+ignore = ["D107", "D212", "E501", "W503", "W605", "D203", "D100"]
+exclude = ["venv"]
+max-line-length = 119
+radon-max-cc = 10
+```
+
+**Key Ignores:**
+- `D107`: Missing docstring in `__init__`
+- `D212`: Multi-line docstring summary should start at the first line
+- `E501`: Line too long (handled by black)
+- `W503`: Line break before binary operator (deprecated)
+
+### Pylint (Static Analysis)
+
+```toml
+[tool.pylint."messages control"]
+disable = [
+    "line-too-long",
+    "trailing-whitespace",
+    "missing-function-docstring",
+    "consider-using-f-string",
+    "import-error",
+    "too-few-public-methods",
+    "redefined-outer-name",
+]
+```
+
+### Mypy (Type Checking)
+
+```toml
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+strict_optional = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+```
+
+## Pre-Commit Hooks
+
+The `.pre-commit-config.yaml` runs these checks automatically:
+
+```yaml
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    hooks:
+      - id: check-merge-conflict
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+
+  - repo: https://github.com/psf/black
+    hooks:
+      - id: black
+        args: [--config=api_layer/pyproject.toml]
+
+  - repo: https://github.com/pycqa/isort
+    hooks:
+      - id: isort
+        args: [--settings-path=api_layer/pyproject.toml]
+
+  - repo: https://github.com/PyCQA/autoflake
+    hooks:
+      - id: autoflake
+        args:
+          - --in-place
+          - --remove-all-unused-imports
+          - --remove-unused-variable
+```
+
+## Running Quality Checks
+
+```bash
+# Run all linting (from api_layer directory)
+make lint
+
+# Run individual tools
+black src/
+isort src/
+flake8 src/
+pylint src/
+mypy src/
+
+# Pre-commit on all files
+SKIP=no-commit-to-branch pre-commit run --all-files
+```
+
+## Code Style Guidelines
+
+### Docstrings
+
+Use Google-style docstrings:
+
+```python
+def get_shares(
+    share_name: str,
+    dltshr_workspace_url: str,
+) -> ShareInfo | None:
+    """Get share details by name.
+
+    Args:
+        share_name: Share name (case-sensitive)
+        dltshr_workspace_url: Databricks workspace URL
+
+    Returns:
+        ShareInfo object or None if not found
+
+    Raises:
+        HTTPException: If authentication fails
+    """
+```
+
+### Function Length
+
+- Maximum function length: 50 lines (use radon for complexity)
+- Cyclomatic complexity: max 10 per function
+- Extract helper functions for complex logic
+
+### Naming Conventions
+
+```python
+# Variables and functions: snake_case
+share_name = "my_share"
+def get_share_by_name(): ...
+
+# Classes: PascalCase
+class ShareService: ...
+class GetSharesResponse: ...
+
+# Constants: UPPER_SNAKE_CASE
+MAX_PAGE_SIZE = 100
+DEFAULT_TIMEOUT = 30
+
+# Private members: leading underscore
+def _validate_share_name(): ...
+_internal_cache = {}
+```
+
+### Type Annotations
+
+Always provide complete type annotations:
+
+```python
+# DO: Complete type hints
+def process_shares(
+    shares: list[ShareInfo],
+    filter_func: Callable[[ShareInfo], bool] | None = None,
+) -> list[ShareInfo]:
+    ...
+
+# DON'T: Missing or incomplete hints
+def process_shares(shares, filter_func=None):  # BAD
+    ...
+```
+
+## DO
+
+- Run `make lint` before every commit
+- Use type hints on all public functions
+- Keep functions under 50 lines
+- Write docstrings for public APIs
+- Use meaningful variable names
+- Follow the existing code style in the file
+
+## DON'T
+
+- Commit code with linting errors
+- Use `# type: ignore` without explanation
+- Disable pylint rules inline without justification
+- Use `Any` type when a specific type is known
+- Leave unused imports or variables
+- Use print statements (use logging instead)
