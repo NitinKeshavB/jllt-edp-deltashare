@@ -1,0 +1,37 @@
+metadata:
+  requestor: test.user@jll.com
+  project_name: "Test Project - Q1 2024"
+  business_line: "Test Business Line"
+  strategy: NEW
+  description: "Test share pack for workflow validation"
+
+recipient:
+  - name: test-recipient-d2o
+    type: D2O
+    email: test@example.com
+    allowed_ips:
+      - 192.168.1.0/24
+      - 10.0.0.50
+    comment: "Test D2O recipient for validation"
+
+  - name: test-recipient-d2d
+    type: D2D
+    metastore_id: "aws:us-west-2:abc-123-def-456"
+    comment: "Test D2D recipient for validation"
+
+share:
+  - name: test_share_q1
+    comment: "Q1 test data share"
+    recipients:
+      - test-recipient-d2o
+      - test-recipient-d2d
+    data_objects:
+      - catalog.schema.test_table_1
+      - catalog.schema.test_table_2
+
+  - name: test_audit_share
+    comment: "Test audit logs"
+    recipients:
+      - test-recipient-d2o
+    data_objects:
+      - catalog.audit_schema.activity_log

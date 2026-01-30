@@ -79,8 +79,55 @@ class Settings(BaseSettings):
     dd_api_key: Optional[str] = None
     """Datadog API key for log ingestion."""
 
-    enable_datadog_logging: bool = True
-    """Enable logging to Datadog (always enabled by default)."""
+    enable_datadog_logging: bool = False
+    """Enable logging to Datadog (disabled by default)."""
+
+    # Workflow System Configuration
+    enable_workflow: bool = False
+    """Enable workflow system for share pack provisioning (disabled by default)."""
+
+    domain_db_connection_string: Optional[str] = None
+    """PostgreSQL connection string for workflow domain database (separate from logging DB)."""
+
+    # Azure Storage Queue for Workflow
+    azure_queue_connection_string: Optional[str] = None
+    """Azure Storage Queue connection string for workflow processing."""
+
+    azure_queue_name: str = "sharepack-processing"
+    """Azure Storage Queue name for share pack provisioning."""
+
+    sync_queue_name: str = "sync-triggers"
+    """Azure Storage Queue name for sync job triggers."""
+
+    # Azure AD Sync (Graph API)
+    azure_tenant_id: Optional[str] = None
+    """Azure AD tenant ID for Graph API access."""
+
+    graph_client_id: Optional[str] = None
+    """Azure AD app client ID for Graph API (may differ from Databricks service principal)."""
+
+    graph_client_secret: Optional[str] = None
+    """Azure AD app client secret for Graph API."""
+
+    # Notification Settings (SMTP)
+    smtp_host: Optional[str] = None
+    """SMTP server hostname for email notifications."""
+
+    smtp_port: int = 587
+    """SMTP server port (default: 587 for TLS)."""
+
+    smtp_username: Optional[str] = None
+    """SMTP authentication username."""
+
+    smtp_password: Optional[str] = None
+    """SMTP authentication password."""
+
+    notification_from_email: str = "deltashare-noreply@jll.com"
+    """From email address for notifications."""
+
+    # Azure Cost Management
+    azure_subscription_id: Optional[str] = None
+    """Azure subscription ID for cost collection."""
 
     model_config = SettingsConfigDict(
         case_sensitive=False,

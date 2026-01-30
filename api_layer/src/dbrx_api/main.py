@@ -59,7 +59,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         postgresql_connection_string=settings.postgresql_connection_string,
         postgresql_table=settings.postgresql_log_table,
         postgresql_min_level=settings.postgresql_min_log_level,
-        enable_datadog_logging=True,  # Always enable Datadog logging
+        enable_datadog_logging=settings.enable_datadog_logging,
         dd_api_key=settings.dd_api_key,
     )
 
@@ -70,7 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         account_id_set=bool(settings.account_id),
         blob_logging=settings.enable_blob_logging,
         postgresql_logging=settings.enable_postgresql_logging,
-        datadog_logging=True,  # Always enabled
+        datadog_logging=settings.enable_datadog_logging,
     )
 
     # Log startup (workspace URL is per-request via X-Workspace-URL header)
@@ -224,6 +224,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ROUTER_DBRX_PIPELINES)
     app.include_router(ROUTER_DBRX_SCHEDULE)
     app.include_router(ROUTER_DBRX_METRICS)
+
+    # Workflow system integration (feature-flagged)
+    if settings.enable_workflow and settings.domain_db_connection_string:
+        logger.info("Initializing workflow system")
+
+        from dbrx_api.routes.routes_workflow import ROUTER_WORKFLOW
+        from dbrx_api.workflow.db.pool import DomainDBPool
+        from dbrx_api.workflow.queue.queue_client import SharePackQueueClient
+
+        # Initialize domain database pool
+        domain_db_pool = DomainDBPool(settings.domain_db_connection_string)
+        app.state.domain_db_pool = domain_db_pool
+
+        # Initialize queue client if configured
+        if settings.azure_queue_connection_string:
+            queue_client = SharePackQueueClient(settings.azure_queue_connection_string, settings.azure_queue_name)
+            app.state.queue_client = queue_client
+            logger.info("Workflow queue client initialized")
+        else:
+            logger.warning("Azure queue not configured - workflow upload will work but processing won't")
+
+        # Register workflow router
+        app.include_router(ROUTER_WORKFLOW)
+
+        logger.success("Workflow system enabled", queue_enabled=bool(settings.azure_queue_connection_string))
+
+        # Add startup/shutdown hooks for workflow
+        @app.on_event("startup")
+        async def startup_workflow():
+            """Initialize workflow database and start queue consumer."""
+            if hasattr(app.state, "domain_db_pool"):
+                await app.state.domain_db_pool.initialize()
+                logger.success("Workflow database initialized")
+
+                # Start queue consumer (provisioning only)
+                if hasattr(app.state, "queue_client"):
+                    import asyncio
+
+                    from dbrx_api.workflow.queue.queue_consumer import start_queue_consumer
+
+                    asyncio.create_task(start_queue_consumer(app.state.queue_client, app.state.domain_db_pool))
+                    logger.success("Share pack queue consumer started")
+
+        @app.on_event("shutdown")
+        async def shutdown_workflow():
+            """Close workflow database connections."""
+            if hasattr(app.state, "domain_db_pool"):
+                await app.state.domain_db_pool.close()
+                logger.info("Workflow database closed")
+
+    else:
+        logger.info("Workflow system disabled (enable_workflow=false or domain_db_connection_string not set)")
+
     app.add_exception_handler(
         exc_class_or_status_code=pydantic.ValidationError,
         handler=handle_pydantic_validation_errors,

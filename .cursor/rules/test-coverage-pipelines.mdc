@@ -12,7 +12,7 @@ globs:
 ## Overview
 This document summarizes the test coverage for the DLT Pipeline API endpoints and SDK functions that were developed and tested.
 
-**Last Updated:** January 20, 2026  
+**Last Updated:** January 20, 2026
 **Test Suite Status:** ✅ All 40 tests passing
 
 ---
@@ -20,8 +20,8 @@ This document summarizes the test coverage for the DLT Pipeline API endpoints an
 ## Test Suites
 
 ### 1. SDK Functions (`test_dbrx_pipelines.py`)
-**Module Under Test:** `src/dbrx_api/jobs/dbrx_pipelines.py`  
-**Tests:** 12 passing  
+**Module Under Test:** `src/dbrx_api/jobs/dbrx_pipelines.py`
+**Tests:** 12 passing
 **Coverage:** Core pipeline management functions
 
 #### Test Classes and Coverage
@@ -73,8 +73,8 @@ This document summarizes the test coverage for the DLT Pipeline API endpoints an
 ---
 
 ### 2. API Endpoints (`test_routes_pipelines.py`)
-**Module Under Test:** `src/dbrx_api/routes_pipelines.py`  
-**Tests:** 19 passing  
+**Module Under Test:** `src/dbrx_api/routes_pipelines.py`
+**Tests:** 19 passing
 **Coverage:** HTTP endpoints for pipeline operations
 
 #### Test Classes and Coverage
@@ -107,7 +107,7 @@ This document summarizes the test coverage for the DLT Pipeline API endpoints an
 - ✅ `test_full_refresh_success` - Successfully starts full refresh
 - ✅ `test_full_refresh_pipeline_not_found` - Returns 404 for missing pipeline
 - ✅ `test_full_refresh_timeout` - Returns 408 for timeout
-- ✅ `test_full_refresh_permission_denied` - Returns 403 for permission errors  
+- ✅ `test_full_refresh_permission_denied` - Returns 403 for permission errors
 - ✅ `test_full_refresh_generic_error` - Returns 400 for other errors
 
 **Covered Lines:**
@@ -149,8 +149,8 @@ This document summarizes the test coverage for the DLT Pipeline API endpoints an
 ---
 
 ### 3. Authentication (`test_token_gen.py`)
-**Module Under Test:** `src/dbrx_api/dbrx_auth/token_gen.py`  
-**Tests:** 9 passing  
+**Module Under Test:** `src/dbrx_api/dbrx_auth/token_gen.py`
+**Tests:** 9 passing
 **Coverage:** OAuth2 token generation
 
 #### Test Classes and Coverage

@@ -44,7 +44,7 @@ def configure_logger(
     postgresql_connection_string: Optional[str] = None,
     postgresql_table: str = "application_logs",
     postgresql_min_level: str = "WARNING",
-    enable_datadog_logging: bool = True,
+    enable_datadog_logging: bool = False,
     dd_api_key: Optional[str] = None,
     dd_env: Optional[str] = None,
 ):

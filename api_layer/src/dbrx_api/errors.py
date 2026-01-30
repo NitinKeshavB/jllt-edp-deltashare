@@ -1,5 +1,7 @@
 """Error handling for FastAPI application and Databricks SDK exceptions."""
 
+import json
+
 import pydantic
 from fastapi import Request
 from fastapi import status
@@ -42,22 +44,29 @@ async def handle_broad_exceptions(request: Request, call_next):
     try:
         return await call_next(request)
     except Exception as err:  # pylint: disable=broad-except
-        error_response = {"detail": "Internal server error", "error_type": type(err).__name__}
+        error_response = {
+            "detail": str(err),
+            "error_type": type(err).__name__,
+            "message": "Internal server error",
+        }
 
         # Get request body from request state (set by RequestContextMiddleware)
         request_body = getattr(request.state, "request_body", None)
 
+        # Escape curly braces in error message to prevent loguru format issues
+        err_str = str(err).replace("{", "{{").replace("}", "}}")
+
         # Log with full context for database storage
         logger.error(
-            f"Unhandled exception: {type(err).__name__}: {str(err)}",
+            f"Unhandled exception: {type(err).__name__}: {err_str}",
             http_status=500,
             status_code=500,  # Also include status_code for consistency
             http_method=request.method,
             url_path=str(request.url.path),
             error_type=type(err).__name__,
             error_message=str(err),
-            request_body=request_body,
-            response_body=error_response,
+            request_body=json.dumps(request_body) if request_body else None,
+            response_body=json.dumps(error_response),
             exc_info=True,  # Include full traceback
         )
 
@@ -94,9 +103,9 @@ async def handle_pydantic_validation_errors(request: Request, exc: pydantic.Vali
         http_method=request.method,
         url_path=str(request.url.path),
         error_type="ValidationError",
-        validation_errors=errors,
-        request_body=request_body,
-        response_body=error_response,
+        validation_errors=json.dumps(errors),
+        request_body=json.dumps(request_body) if request_body else None,
+        response_body=json.dumps(error_response),
     )
 
     response = JSONResponse(
@@ -133,6 +142,9 @@ async def handle_databricks_errors(request: Request, exc: DatabricksError) -> JS
     """
     error_message = str(exc)
     error_type = type(exc).__name__
+
+    # Escape curly braces in error message to prevent loguru format issues
+    error_message_escaped = error_message.replace("{", "{{").replace("}", "}}")
 
     # Determine HTTP status code based on exception type
     if DATABRICKS_SDK_AVAILABLE:
@@ -180,7 +192,7 @@ async def handle_databricks_errors(request: Request, exc: DatabricksError) -> JS
 
     # Log with full context for database storage
     logger.error(
-        f"Databricks API error: {error_type}: {error_message}",
+        f"Databricks API error: {error_type}: {error_message_escaped}",
         http_status=http_status,
         status_code=http_status,  # Also include status_code for consistency
         http_method=request.method,
@@ -188,8 +200,8 @@ async def handle_databricks_errors(request: Request, exc: DatabricksError) -> JS
         error_type=error_type,
         error_message=error_message,
         databricks_error_details=error_message,
-        request_body=request_body,
-        response_body=error_response,
+        request_body=json.dumps(request_body) if request_body else None,
+        response_body=json.dumps(error_response),
         exc_info=True,  # Include full traceback
     )
 
@@ -224,6 +236,9 @@ def handle_databricks_connection_error(error: Exception, request: Request = None
     error_message = str(error)
     error_type = type(error).__name__
 
+    # Escape curly braces in error message to prevent loguru format issues
+    error_message_escaped = error_message.replace("{", "{{").replace("}", "}}")
+
     # Check for common connection error patterns
     if "timeout" in error_message.lower():
         detail = "Connection to Databricks workspace timed out. Please try again later."
@@ -246,7 +261,7 @@ def handle_databricks_connection_error(error: Exception, request: Request = None
 
     # Log with full context for database storage
     logger.error(
-        f"Databricks connection error: {error_type}: {error_message}",
+        f"Databricks connection error: {error_type}: {error_message_escaped}",
         http_status=503,
         status_code=503,  # Also include status_code for consistency
         http_method=request.method if request else None,
@@ -254,8 +269,8 @@ def handle_databricks_connection_error(error: Exception, request: Request = None
         error_type=error_type,
         error_message=error_message,
         connection_error_detail=detail,
-        request_body=request_body,
-        response_body=error_response,
+        request_body=json.dumps(request_body) if request_body else None,
+        response_body=json.dumps(error_response),
         exc_info=True,  # Include full traceback
     )
 
