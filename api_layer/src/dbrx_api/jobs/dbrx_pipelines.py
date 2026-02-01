@@ -27,6 +27,10 @@ except ImportError:
     PipelineStateInfo = None  # type: ignore[misc, assignment]
 
 from dbrx_api.dbrx_auth.token_gen import get_auth_token
+from dbrx_api.monitoring.logger import logger
+from dbrx_api.settings import Settings
+
+settings = Settings()
 
 
 def list_pipelines(
@@ -148,6 +152,518 @@ def get_pipeline_by_name(
             return None
 
 
+def validate_and_prepare_catalog(
+    w_client: "WorkspaceClient",
+    catalog_name: str,
+) -> dict:
+    """
+    Validate catalog exists, create if it doesn't, and grant privileges to service principal.
+
+    Args:
+        w_client: WorkspaceClient instance
+        catalog_name: Catalog name
+
+    Returns:
+        dict with 'success' (bool), 'message' (str), 'created' (bool)
+    """
+    try:
+        # Check if catalog exists
+        try:
+            catalog = w_client.catalogs.get(name=catalog_name)
+            logger.info(
+                "Catalog exists",
+                catalog=catalog_name,
+                owner=catalog.owner if catalog else None,
+            )
+            return {
+                "success": True,
+                "message": f"Catalog '{catalog_name}' exists",
+                "created": False,
+            }
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "does not exist" in error_msg or "not found" in error_msg or "catalog_not_found" in error_msg:
+                # Catalog doesn't exist, try to create it
+                logger.info(
+                    "Catalog does not exist, creating it",
+                    catalog=catalog_name,
+                )
+
+                try:
+                    # Create catalog
+                    w_client.catalogs.create(
+                        name=catalog_name,
+                        comment=f"Catalog created automatically for DLT pipeline",
+                    )
+                    logger.info(
+                        "Catalog created successfully",
+                        catalog=catalog_name,
+                    )
+
+                    # Grant ALL PRIVILEGES on catalog to service principal
+                    try:
+                        # Get SQL warehouses for executing GRANT statement
+                        warehouses = list(w_client.warehouses.list())
+                        if not warehouses:
+                            logger.warning(
+                                "No SQL warehouses available to grant privileges on catalog",
+                                catalog=catalog_name,
+                            )
+                            return {
+                                "success": True,
+                                "message": (
+                                    f"Catalog '{catalog_name}' created but privileges could not be granted "
+                                    f"(no SQL warehouse available). Please grant privileges manually."
+                                ),
+                                "created": True,
+                            }
+
+                        warehouse_id = warehouses[0].id
+                        service_principal_id = settings.client_id
+
+                        # Grant ALL PRIVILEGES to service principal
+                        grant_sql = f"GRANT ALL PRIVILEGES ON CATALOG {catalog_name} TO `{service_principal_id}`"
+
+                        logger.info(
+                            "Granting privileges on catalog",
+                            catalog=catalog_name,
+                            service_principal=service_principal_id,
+                            warehouse_id=warehouse_id,
+                        )
+
+                        w_client.statement_execution.execute_statement(
+                            warehouse_id=warehouse_id,
+                            statement=grant_sql,
+                        )
+
+                        logger.info(
+                            "Privileges granted successfully on catalog",
+                            catalog=catalog_name,
+                            service_principal=service_principal_id,
+                        )
+
+                        return {
+                            "success": True,
+                            "message": (
+                                f"Catalog '{catalog_name}' created successfully and privileges granted to "
+                                f"service principal '{service_principal_id}'"
+                            ),
+                            "created": True,
+                        }
+                    except Exception as grant_error:
+                        logger.warning(
+                            "Failed to grant privileges on catalog",
+                            catalog=catalog_name,
+                            error=str(grant_error),
+                        )
+                        return {
+                            "success": True,
+                            "message": (
+                                f"Catalog '{catalog_name}' created but privileges could not be granted: "
+                                f"{str(grant_error)}. Please grant privileges manually."
+                            ),
+                            "created": True,
+                        }
+
+                except Exception as create_error:
+                    logger.error(
+                        "Failed to create catalog",
+                        catalog=catalog_name,
+                        error=str(create_error),
+                    )
+                    return {
+                        "success": False,
+                        "message": f"Failed to create catalog '{catalog_name}': {str(create_error)}",
+                        "created": False,
+                    }
+            else:
+                # Different error (permissions, etc.)
+                logger.error(
+                    "Error checking catalog",
+                    catalog=catalog_name,
+                    error=str(e),
+                )
+                return {
+                    "success": False,
+                    "message": f"Error accessing catalog '{catalog_name}': {str(e)}",
+                    "created": False,
+                }
+    except Exception as e:
+        logger.error(
+            "Unexpected error in validate_and_prepare_catalog",
+            catalog=catalog_name,
+            error=str(e),
+        )
+        return {
+            "success": False,
+            "message": f"Unexpected error validating catalog: {str(e)}",
+            "created": False,
+        }
+
+
+def validate_and_prepare_target_schema(
+    w_client: "WorkspaceClient",
+    target_catalog_name: str,
+    target_schema_name: str,
+) -> dict:
+    """
+    Validate target schema exists, create if it doesn't.
+
+    Args:
+        w_client: WorkspaceClient instance
+        target_catalog_name: Target catalog name
+        target_schema_name: Target schema name
+
+    Returns:
+        dict with 'success' (bool), 'message' (str), 'created' (bool)
+    """
+    try:
+        full_schema_name = f"{target_catalog_name}.{target_schema_name}"
+
+        # Check if schema exists
+        try:
+            schema = w_client.schemas.get(full_name=full_schema_name)
+            logger.info(
+                "Target schema exists",
+                catalog=target_catalog_name,
+                schema=target_schema_name,
+                owner=schema.owner if schema else None,
+            )
+            return {
+                "success": True,
+                "message": f"Target schema '{full_schema_name}' exists",
+                "created": False,
+            }
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "does not exist" in error_msg or "not found" in error_msg:
+                # Schema doesn't exist, try to create it
+                logger.info(
+                    "Target schema does not exist, creating it",
+                    catalog=target_catalog_name,
+                    schema=target_schema_name,
+                )
+
+                try:
+                    w_client.schemas.create(
+                        name=target_schema_name,
+                        catalog_name=target_catalog_name,
+                        comment=f"Schema created automatically for DLT pipeline",
+                    )
+                    logger.info(
+                        "Target schema created successfully",
+                        catalog=target_catalog_name,
+                        schema=target_schema_name,
+                    )
+                    return {
+                        "success": True,
+                        "message": f"Target schema '{full_schema_name}' created successfully",
+                        "created": True,
+                    }
+                except Exception as create_error:
+                    logger.error(
+                        "Failed to create target schema",
+                        catalog=target_catalog_name,
+                        schema=target_schema_name,
+                        error=str(create_error),
+                    )
+                    return {
+                        "success": False,
+                        "message": f"Failed to create target schema '{full_schema_name}': {str(create_error)}",
+                        "created": False,
+                    }
+            else:
+                # Different error (permissions, etc.)
+                logger.error(
+                    "Error checking target schema",
+                    catalog=target_catalog_name,
+                    schema=target_schema_name,
+                    error=str(e),
+                )
+                return {
+                    "success": False,
+                    "message": f"Error accessing target schema '{full_schema_name}': {str(e)}",
+                    "created": False,
+                }
+    except Exception as e:
+        logger.error(
+            "Unexpected error in validate_and_prepare_target_schema",
+            catalog=target_catalog_name,
+            schema=target_schema_name,
+            error=str(e),
+        )
+        return {
+            "success": False,
+            "message": f"Unexpected error validating target schema: {str(e)}",
+            "created": False,
+        }
+
+
+def validate_and_prepare_source_table(
+    w_client: "WorkspaceClient",
+    source_table: str,
+) -> dict:
+    """
+    Validate source table exists, is accessible, and has CDF enabled.
+    Enable CDF if not already enabled.
+
+    Args:
+        w_client: WorkspaceClient instance
+        source_table: Full table name (catalog.schema.table)
+
+    Returns:
+        dict with 'success' (bool), 'message' (str), 'cdf_enabled' (bool), 'cdf_was_enabled' (bool)
+    """
+    try:
+        # Parse table name
+        parts = source_table.split(".")
+        if len(parts) != 3:
+            return {
+                "success": False,
+                "message": f"Invalid source table format '{source_table}'. Expected format: catalog.schema.table",
+                "cdf_enabled": False,
+                "cdf_was_enabled": False,
+            }
+
+        catalog_name, schema_name, table_name = parts
+
+        # Check if table exists and is accessible
+        try:
+            table = w_client.tables.get(full_name=source_table)
+            logger.info(
+                "Source table exists and is accessible",
+                table=source_table,
+                table_type=table.table_type if table else None,
+            )
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "does not exist" in error_msg or "not found" in error_msg:
+                logger.error("Source table does not exist", table=source_table)
+                return {
+                    "success": False,
+                    "message": f"Source table '{source_table}' does not exist",
+                    "cdf_enabled": False,
+                    "cdf_was_enabled": False,
+                }
+            else:
+                logger.error("Cannot access source table", table=source_table, error=str(e))
+                return {
+                    "success": False,
+                    "message": f"Cannot access source table '{source_table}': {str(e)}",
+                    "cdf_enabled": False,
+                    "cdf_was_enabled": False,
+                }
+
+        # Check if CDF is enabled
+        cdf_enabled = False
+        if table and table.properties:
+            cdf_enabled = table.properties.get("delta.enableChangeDataFeed", "false").lower() == "true"
+
+        if cdf_enabled:
+            logger.info("Change Data Feed is already enabled", table=source_table)
+            return {
+                "success": True,
+                "message": f"Source table '{source_table}' exists and CDF is enabled",
+                "cdf_enabled": True,
+                "cdf_was_enabled": True,
+            }
+        else:
+            # CDF not enabled, try to enable it
+            logger.info("Change Data Feed is not enabled, attempting to enable it", table=source_table)
+
+            try:
+                # Enable CDF using ALTER TABLE command via SQL execution
+                alter_sql = f"ALTER TABLE {source_table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
+
+                # Try to get a SQL warehouse for executing the ALTER TABLE command
+                try:
+                    warehouses = list(w_client.warehouses.list())
+                    if not warehouses:
+                        logger.warning(
+                            "No SQL warehouses available to enable CDF",
+                            table=source_table,
+                        )
+                        return {
+                            "success": False,
+                            "message": (
+                                f"Change Data Feed is not enabled on '{source_table}' and no SQL warehouse "
+                                f"is available to enable it. Please enable CDF manually or create a SQL warehouse."
+                            ),
+                            "cdf_enabled": False,
+                            "cdf_was_enabled": False,
+                        }
+
+                    # Use the first available SQL warehouse
+                    warehouse_id = warehouses[0].id
+                    logger.info(
+                        "Using SQL warehouse to enable CDF",
+                        table=source_table,
+                        warehouse_id=warehouse_id,
+                    )
+
+                    # Execute ALTER TABLE to enable CDF
+                    w_client.statement_execution.execute_statement(
+                        warehouse_id=warehouse_id,
+                        statement=alter_sql,
+                        catalog=catalog_name,
+                        schema=schema_name,
+                    )
+
+                    logger.info("Change Data Feed enabled successfully", table=source_table)
+                    return {
+                        "success": True,
+                        "message": f"Source table '{source_table}' exists and CDF has been enabled",
+                        "cdf_enabled": True,
+                        "cdf_was_enabled": False,
+                    }
+                except Exception as warehouse_error:
+                    logger.error(
+                        "Failed to enable Change Data Feed",
+                        table=source_table,
+                        error=str(warehouse_error),
+                    )
+                    return {
+                        "success": False,
+                        "message": f"Failed to enable Change Data Feed on '{source_table}': {str(warehouse_error)}",
+                        "cdf_enabled": False,
+                        "cdf_was_enabled": False,
+                    }
+            except Exception as alter_error:
+                logger.error(
+                    "Error in CDF enable process",
+                    table=source_table,
+                    error=str(alter_error),
+                )
+                return {
+                    "success": False,
+                    "message": f"Error enabling Change Data Feed on '{source_table}': {str(alter_error)}",
+                    "cdf_enabled": False,
+                    "cdf_was_enabled": False,
+                }
+
+    except Exception as e:
+        logger.error(
+            "Unexpected error in validate_and_prepare_source_table",
+            table=source_table,
+            error=str(e),
+        )
+        return {
+            "success": False,
+            "message": f"Unexpected error validating source table: {str(e)}",
+            "cdf_enabled": False,
+            "cdf_was_enabled": False,
+        }
+
+
+def validate_pipeline_keys(
+    w_client: "WorkspaceClient",
+    source_table: str,
+    keys: str,
+) -> dict:
+    """
+    Validate that the specified keys exist as columns in the source table.
+
+    Args:
+        w_client: WorkspaceClient instance
+        source_table: Full table name (catalog.schema.table)
+        keys: Comma-separated list of column names (e.g., "id,timestamp")
+
+    Returns:
+        dict with 'success' (bool), 'message' (str), 'valid_keys' (list), 'invalid_keys' (list)
+    """
+    try:
+        # Parse keys
+        key_list = [k.strip() for k in keys.split(",") if k.strip()]
+
+        if not key_list:
+            return {
+                "success": False,
+                "message": "No keys specified",
+                "valid_keys": [],
+                "invalid_keys": [],
+            }
+
+        # Get table schema
+        try:
+            table = w_client.tables.get(full_name=source_table)
+
+            if not table or not table.columns:
+                logger.error("Could not retrieve table columns", table=source_table)
+                return {
+                    "success": False,
+                    "message": f"Could not retrieve columns from source table '{source_table}'",
+                    "valid_keys": [],
+                    "invalid_keys": key_list,
+                }
+
+            # Extract column names (case-insensitive comparison)
+            table_columns = {col.name.lower(): col.name for col in table.columns}
+
+            valid_keys = []
+            invalid_keys = []
+
+            for key in key_list:
+                key_lower = key.lower()
+                if key_lower in table_columns:
+                    # Use the actual column name from the table (preserves case)
+                    valid_keys.append(table_columns[key_lower])
+                else:
+                    invalid_keys.append(key)
+
+            if invalid_keys:
+                logger.warning(
+                    "Invalid keys found",
+                    table=source_table,
+                    valid_keys=valid_keys,
+                    invalid_keys=invalid_keys,
+                )
+                return {
+                    "success": False,
+                    "message": f"The following keys do not exist in source table '{source_table}': {', '.join(invalid_keys)}",
+                    "valid_keys": valid_keys,
+                    "invalid_keys": invalid_keys,
+                }
+            else:
+                logger.info(
+                    "All keys are valid",
+                    table=source_table,
+                    keys=valid_keys,
+                )
+                return {
+                    "success": True,
+                    "message": f"All keys are valid columns in source table '{source_table}'",
+                    "valid_keys": valid_keys,
+                    "invalid_keys": [],
+                }
+
+        except Exception as e:
+            logger.error(
+                "Error retrieving table schema",
+                table=source_table,
+                error=str(e),
+            )
+            return {
+                "success": False,
+                "message": f"Error retrieving schema from source table '{source_table}': {str(e)}",
+                "valid_keys": [],
+                "invalid_keys": key_list,
+            }
+
+    except Exception as e:
+        logger.error(
+            "Unexpected error in validate_pipeline_keys",
+            table=source_table,
+            keys=keys,
+            error=str(e),
+        )
+        return {
+            "success": False,
+            "message": f"Unexpected error validating keys: {str(e)}",
+            "valid_keys": [],
+            "invalid_keys": [],
+        }
+
+
 def create_pipeline(
     dltshr_workspace_url: str,
     pipeline_name: str,
@@ -159,7 +675,13 @@ def create_pipeline(
     serverless: bool = False,
 ) -> CreatePipelineResponse | str:
     """
-    Create a DLT pipeline.
+    Create a DLT pipeline with comprehensive validations.
+
+    Validations performed:
+    1. Target catalog exists (creates if needed and grants privileges to service principal)
+    2. Target schema exists (creates if needed)
+    3. Source table exists, is accessible, and has CDF enabled (enables if needed)
+    4. Pipeline keys are valid columns in the source table
 
     Returns:
         CreatePipelineResponse on success, error message string on failure
@@ -179,35 +701,152 @@ def create_pipeline(
 
         if pipeline_id:
             return f"Pipeline already exists: {pipeline_name}"
-        else:
-            return w_client.pipelines.create(
-                name=pipeline_name,
-                catalog=target_catalog_name,
-                target=target_schema_name,
-                configuration=configuration,
-                root_path="/Workspace/Shared/.bundle/dab_project/prod/files/citibike_etl/dlt/pattern",
-                continuous=False,
-                serverless=serverless,
-                libraries=[
-                    PipelineLibrary(
-                        file=FileLibrary(
-                            path="/Workspace/Shared/.bundle/dab_project/prod/files/citibike_etl/dlt/pattern/pattern-load.py"
-                        )
-                    )
-                ],
-                notifications=[
-                    Notifications(
-                        email_recipients=notifications_list,
-                        alerts=[
-                            "on-update-failure",
-                            "on-update-fatal-failure",
-                            "on-update-success",
-                            "on-flow-failure",
-                        ],
-                    )
-                ],
-                tags=tags,
+
+        # Extract required configuration values for validation
+        source_table = configuration.get("pipelines.source_table")
+        keys = configuration.get("pipelines.keys")
+
+        if not source_table:
+            return "Missing required configuration: pipelines.source_table"
+
+        if not keys:
+            return "Missing required configuration: pipelines.keys"
+
+        logger.info(
+            "Starting pipeline validations",
+            pipeline_name=pipeline_name,
+            source_table=source_table,
+            target_catalog=target_catalog_name,
+            target_schema=target_schema_name,
+            keys=keys,
+        )
+
+        # Validation 1: Check and create target catalog if needed
+        catalog_validation = validate_and_prepare_catalog(
+            w_client=w_client,
+            catalog_name=target_catalog_name,
+        )
+
+        if not catalog_validation["success"]:
+            logger.error(
+                "Target catalog validation failed",
+                pipeline_name=pipeline_name,
+                error=catalog_validation["message"],
             )
+            return catalog_validation["message"]
+
+        logger.info(
+            "Target catalog validation passed",
+            pipeline_name=pipeline_name,
+            catalog_created=catalog_validation["created"],
+            message=catalog_validation["message"],
+        )
+
+        # Validation 2: Check and create target schema if needed
+        schema_validation = validate_and_prepare_target_schema(
+            w_client=w_client,
+            target_catalog_name=target_catalog_name,
+            target_schema_name=target_schema_name,
+        )
+
+        if not schema_validation["success"]:
+            logger.error(
+                "Target schema validation failed",
+                pipeline_name=pipeline_name,
+                error=schema_validation["message"],
+            )
+            return schema_validation["message"]
+
+        logger.info(
+            "Target schema validation passed",
+            pipeline_name=pipeline_name,
+            schema_created=schema_validation["created"],
+            message=schema_validation["message"],
+        )
+
+        # Validation 3: Check source table and enable CDF if needed
+        source_validation = validate_and_prepare_source_table(
+            w_client=w_client,
+            source_table=source_table,
+        )
+
+        if not source_validation["success"]:
+            logger.error(
+                "Source table validation failed",
+                pipeline_name=pipeline_name,
+                source_table=source_table,
+                error=source_validation["message"],
+            )
+            return source_validation["message"]
+
+        logger.info(
+            "Source table validation passed",
+            pipeline_name=pipeline_name,
+            source_table=source_table,
+            cdf_was_enabled=source_validation["cdf_was_enabled"],
+            message=source_validation["message"],
+        )
+
+        # Validation 4: Verify keys exist in source table
+        keys_validation = validate_pipeline_keys(
+            w_client=w_client,
+            source_table=source_table,
+            keys=keys,
+        )
+
+        if not keys_validation["success"]:
+            logger.error(
+                "Pipeline keys validation failed",
+                pipeline_name=pipeline_name,
+                source_table=source_table,
+                keys=keys,
+                invalid_keys=keys_validation["invalid_keys"],
+                error=keys_validation["message"],
+            )
+            return keys_validation["message"]
+
+        logger.info(
+            "Pipeline keys validation passed",
+            pipeline_name=pipeline_name,
+            source_table=source_table,
+            valid_keys=keys_validation["valid_keys"],
+            message=keys_validation["message"],
+        )
+
+        # All validations passed, create the pipeline
+        logger.info(
+            "All validations passed, creating pipeline",
+            pipeline_name=pipeline_name,
+        )
+
+        return w_client.pipelines.create(
+            name=pipeline_name,
+            catalog=target_catalog_name,
+            target=target_schema_name,
+            configuration=configuration,
+            root_path="/Workspace/Shared/.bundle/dab_project/prod/files/citibike_etl/dlt/pattern",
+            continuous=False,
+            serverless=serverless,
+            libraries=[
+                PipelineLibrary(
+                    file=FileLibrary(
+                        path="/Workspace/Shared/.bundle/dab_project/prod/files/citibike_etl/dlt/pattern/pattern-load.py"
+                    )
+                )
+            ],
+            notifications=[
+                Notifications(
+                    email_recipients=notifications_list,
+                    alerts=[
+                        "on-update-failure",
+                        "on-update-fatal-failure",
+                        "on-update-success",
+                        "on-flow-failure",
+                    ],
+                )
+            ],
+            tags=tags,
+        )
 
     except Exception as e:
         return _handle_pipeline_error(e, "create", pipeline_name)
@@ -624,8 +1263,11 @@ def _handle_pipeline_error(error: Exception, operation: str, pipeline_name: str)
     if "PERMISSION_DENIED" in error_msg or "permission denied" in error_lower or "not an owner" in error_lower:
         return f"Permission denied for {operation} on pipeline: {pipeline_name}"
 
-    # Resource not found
+    # Resource not found - be more specific during create operations
     if "RESOURCE_DOES_NOT_EXIST" in error_msg or "does not exist" in error_lower or "not found" in error_lower:
+        if operation == "create":
+            # During create, "not found" likely means catalog/schema/library not found, not the pipeline
+            return f"Failed to create pipeline '{pipeline_name}': {error_msg}"
         return f"Pipeline not found: {pipeline_name}"
 
     # Invalid state

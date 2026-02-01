@@ -4,8 +4,12 @@ Recipient Repository
 Repository for Delta Share recipient CRUD operations with SCD Type 2 tracking.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 from uuid import UUID
+
 import asyncpg
 
 from dbrx_api.workflow.db.repository_base import BaseRepository
@@ -71,9 +75,7 @@ class RecipientRepository(BaseRepository):
             "is_deleted": False,
         }
 
-        return await self.create_or_update(
-            recipient_id, fields, created_by, "Provisioned from share pack"
-        )
+        return await self.create_or_update(recipient_id, fields, created_by, "Provisioned from share pack")
 
     async def list_by_share_pack(
         self,

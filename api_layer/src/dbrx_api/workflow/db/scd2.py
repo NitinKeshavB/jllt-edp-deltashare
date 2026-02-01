@@ -6,8 +6,12 @@ All mutable entities use this pattern: expire current row, insert new version.
 Never UPDATE in place - always INSERT new version with incremented version number.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 from uuid import UUID
+
 import asyncpg
 from loguru import logger
 
@@ -58,22 +62,30 @@ async def expire_and_insert_scd2(
 
     # 3. Build INSERT statement dynamically
     # Include entity_id column + all provided fields + SCD2 columns
-    columns = [entity_id_column] + list(new_fields.keys()) + [
-        "version",
-        "created_by",
-        "change_reason",
-        "effective_from",
-        "effective_to",
-        "is_current",
-    ]
+    columns = (
+        [entity_id_column]
+        + list(new_fields.keys())
+        + [
+            "version",
+            "created_by",
+            "change_reason",
+            "effective_from",
+            "effective_to",
+            "is_current",
+        ]
+    )
 
     placeholders = [f"${i+1}" for i in range(len(columns))]
 
-    values = [entity_id] + list(new_fields.values()) + [
-        new_version,
-        created_by,
-        change_reason,
-    ]
+    values = (
+        [entity_id]
+        + list(new_fields.values())
+        + [
+            new_version,
+            created_by,
+            change_reason,
+        ]
+    )
     # Note: effective_from, effective_to, is_current use database defaults via keyword
 
     insert_sql = f"""
@@ -84,9 +96,7 @@ async def expire_and_insert_scd2(
 
     record_id = await conn.fetchval(insert_sql, *values)
 
-    logger.debug(
-        f"SCD2 insert: {table}.{entity_id_column}={entity_id}, version={new_version}, record_id={record_id}"
-    )
+    logger.debug(f"SCD2 insert: {table}.{entity_id_column}={entity_id}, version={new_version}, record_id={record_id}")
 
     return record_id
 
@@ -219,16 +229,26 @@ async def soft_delete_scd2(
         return None
 
     # Prepare fields for new version (same as current, but is_deleted=true)
-    new_fields = {k: v for k, v in current.items() if k not in [
-        "record_id", "version", "created_by", "change_reason",
-        "effective_from", "effective_to", "is_current", entity_id_column
-    ]}
+    new_fields = {
+        k: v
+        for k, v in current.items()
+        if k
+        not in [
+            "record_id",
+            "version",
+            "created_by",
+            "change_reason",
+            "effective_from",
+            "effective_to",
+            "is_current",
+            entity_id_column,
+        ]
+    }
     new_fields["is_deleted"] = True
 
     # Insert new version
     record_id = await expire_and_insert_scd2(
-        conn, table, entity_id_column, entity_id,
-        new_fields, deleted_by, deletion_reason
+        conn, table, entity_id_column, entity_id, new_fields, deleted_by, deletion_reason
     )
 
     logger.info(f"Soft deleted {table}.{entity_id_column}={entity_id}, record_id={record_id}")
@@ -307,16 +327,26 @@ async def restore_deleted_entity(
         return None
 
     # Prepare fields for new version (same as current, but is_deleted=false)
-    new_fields = {k: v for k, v in current.items() if k not in [
-        "record_id", "version", "created_by", "change_reason",
-        "effective_from", "effective_to", "is_current", entity_id_column
-    ]}
+    new_fields = {
+        k: v
+        for k, v in current.items()
+        if k
+        not in [
+            "record_id",
+            "version",
+            "created_by",
+            "change_reason",
+            "effective_from",
+            "effective_to",
+            "is_current",
+            entity_id_column,
+        ]
+    }
     new_fields["is_deleted"] = False
 
     # Insert new version
     record_id = await expire_and_insert_scd2(
-        conn, table, entity_id_column, entity_id,
-        new_fields, restored_by, restoration_reason
+        conn, table, entity_id_column, entity_id, new_fields, restored_by, restoration_reason
     )
 
     logger.info(f"Restored {table}.{entity_id_column}={entity_id}, record_id={record_id}")

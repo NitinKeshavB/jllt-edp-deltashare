@@ -1,5 +1,4 @@
 import ipaddress
-from typing import List
 from typing import Optional
 
 from databricks.sdk.service.sharing import AuthenticationType
@@ -297,15 +296,23 @@ async def create_recipient_databricks_to_opensharing(
     response: Response,
     recipient_name: str,
     description: str,
-    ip_access_list: Optional[List[str]] = Query(default=None),
+    ip_access_list: Optional[str] = Query(
+        default=None,
+        description="Comma-delimited list of IP addresses or CIDR blocks (e.g., '192.168.1.1,10.0.0.0/24')",
+    ),
     workspace_url: str = Depends(get_workspace_url),
 ) -> RecipientInfo:
     """Create a recipient for Databricks to Databricks sharing."""
+    # Parse comma-delimited IP access list
+    parsed_ip_list = None
+    if ip_access_list:
+        parsed_ip_list = [ip.strip() for ip in ip_access_list.split(",") if ip.strip()]
+
     logger.info(
         "Creating D2O recipient",
         recipient_name=recipient_name,
         description=description,
-        ip_access_list=ip_access_list,
+        ip_access_list=parsed_ip_list,
         method=request.method,
         path=request.url.path,
         workspace_url=workspace_url,
@@ -320,9 +327,9 @@ async def create_recipient_databricks_to_opensharing(
         )
 
     # Validate IP access list if provided
-    if ip_access_list and len(ip_access_list) > 0:
+    if parsed_ip_list and len(parsed_ip_list) > 0:
         invalid_ips = []
-        for ip_str in ip_access_list:
+        for ip_str in parsed_ip_list:
             try:
                 # Try parsing as network (supports both single IPs and CIDR)
                 ipaddress.ip_network(ip_str.strip(), strict=False)
@@ -339,7 +346,7 @@ async def create_recipient_databricks_to_opensharing(
     recipient = create_recipient_for_d2o(
         recipient_name=recipient_name,
         description=description,
-        ip_access_list=ip_access_list,
+        ip_access_list=parsed_ip_list,
         dltshr_workspace_url=workspace_url,
     )
 
@@ -463,14 +470,20 @@ async def add_client_ip_to_databricks_opensharing(
     request: Request,
     response: Response,
     recipient_name: str,
-    ip_access_list: List[str] = Query(...),
+    ip_access_list: str = Query(
+        ...,
+        description="Comma-delimited list of IP addresses or CIDR blocks to add (e.g., '192.168.1.1,10.0.0.0/24')",
+    ),
     workspace_url: str = Depends(get_workspace_url),
 ):
     """Add IP to access list for Databricks to opensharing protocol."""
+    # Parse comma-delimited IP access list
+    parsed_ip_list = [ip.strip() for ip in ip_access_list.split(",") if ip.strip()]
+
     logger.info(
         "Adding IP addresses to recipient",
         recipient_name=recipient_name,
-        ip_access_list=ip_access_list,
+        ip_access_list=parsed_ip_list,
         method=request.method,
         path=request.url.path,
         workspace_url=workspace_url,
@@ -502,7 +515,7 @@ async def add_client_ip_to_databricks_opensharing(
             detail="Cannot add IP addresses for DATABRICKS to DATABRICKS type recipient. IP access lists only work with TOKEN authentication.",
         )
 
-    if not ip_access_list or len(ip_access_list) == 0:
+    if not parsed_ip_list or len(parsed_ip_list) == 0:
         logger.warning("Empty IP access list provided", recipient_name=recipient_name)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -511,7 +524,7 @@ async def add_client_ip_to_databricks_opensharing(
 
     # Validate each IP address or CIDR block
     invalid_ips = []
-    for ip_str in ip_access_list:
+    for ip_str in parsed_ip_list:
         try:
             # Try parsing as network (supports both single IPs and CIDR)
             ipaddress.ip_network(ip_str.strip(), strict=False)
@@ -527,7 +540,7 @@ async def add_client_ip_to_databricks_opensharing(
             detail=(f"Invalid IP addresses or CIDR blocks: " f"{', '.join(invalid_ips)}"),
         )
 
-    recipient = add_recipient_ip(recipient_name, ip_access_list, workspace_url)
+    recipient = add_recipient_ip(recipient_name, parsed_ip_list, workspace_url)
 
     if isinstance(recipient, str) and "Permission denied" in recipient:
         logger.warning("Permission denied to add IPs", recipient_name=recipient_name, error=recipient)
@@ -558,14 +571,20 @@ async def revoke_client_ip_from_databricks_opensharing(
     request: Request,
     response: Response,
     recipient_name: str,
-    ip_access_list: List[str] = Query(...),
+    ip_access_list: str = Query(
+        ...,
+        description="Comma-delimited list of IP addresses or CIDR blocks to revoke (e.g., '192.168.1.1,10.0.0.0/24')",
+    ),
     workspace_url: str = Depends(get_workspace_url),
 ) -> RecipientInfo:
     """revoke IP to access list for Databricks to opensharing protocol."""
+    # Parse comma-delimited IP access list
+    parsed_ip_list = [ip.strip() for ip in ip_access_list.split(",") if ip.strip()]
+
     logger.info(
         "Revoking IP addresses from recipient",
         recipient_name=recipient_name,
-        ip_access_list=ip_access_list,
+        ip_access_list=parsed_ip_list,
         method=request.method,
         path=request.url.path,
         workspace_url=workspace_url,
@@ -597,7 +616,7 @@ async def revoke_client_ip_from_databricks_opensharing(
             detail="Cannot revoke IP addresses for DATABRICKS to DATABRICKS type recipient. IP access lists only work with TOKEN authentication.",
         )
 
-    if not ip_access_list or len(ip_access_list) == 0:
+    if not parsed_ip_list or len(parsed_ip_list) == 0:
         logger.warning("Empty IP access list provided for revocation", recipient_name=recipient_name)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -606,7 +625,7 @@ async def revoke_client_ip_from_databricks_opensharing(
 
     # Validate each IP address or CIDR block
     invalid_ips = []
-    for ip_str in ip_access_list:
+    for ip_str in parsed_ip_list:
         try:
             # Try parsing as network (supports both single IPs and CIDR)
             ipaddress.ip_network(ip_str.strip(), strict=False)
@@ -627,7 +646,7 @@ async def revoke_client_ip_from_databricks_opensharing(
     if recipient.ip_access_list and recipient.ip_access_list.allowed_ip_addresses:
         current_ips = recipient.ip_access_list.allowed_ip_addresses
 
-    ips_not_present = [ip for ip in ip_access_list if ip.strip() not in current_ips]
+    ips_not_present = [ip for ip in parsed_ip_list if ip.strip() not in current_ips]
 
     if ips_not_present:
         logger.warning(
@@ -643,7 +662,7 @@ async def revoke_client_ip_from_databricks_opensharing(
             ),
         )
 
-    recipient = revoke_recipient_ip(recipient_name, ip_access_list, workspace_url)
+    recipient = revoke_recipient_ip(recipient_name, parsed_ip_list, workspace_url)
 
     if isinstance(recipient, str) and "Permission denied" in recipient:
         logger.warning("Permission denied to revoke IPs", recipient_name=recipient_name, error=recipient)

@@ -7,7 +7,6 @@ Values must match exactly with database constraints.
 
 from enum import Enum
 
-
 # ════════════════════════════════════════════════════════════════════════════
 # Geographic and Infrastructure Enums
 # ════════════════════════════════════════════════════════════════════════════

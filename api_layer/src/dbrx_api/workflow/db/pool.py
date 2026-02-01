@@ -17,8 +17,8 @@ For production, consider implementing versioned migrations (e.g., Alembic, Flywa
 instead of this simple "all or nothing" approach.
 """
 
-import asyncio
 from typing import Optional
+
 import asyncpg
 from loguru import logger
 
@@ -161,9 +161,7 @@ class DomainDBPool:
                             f"Schema may have evolved. Expected tables: {self.EXPECTED_TABLES}. "
                             f"Please update DomainDBPool.EXPECTED_TABLES or manually clean up the schema."
                         )
-                        raise RuntimeError(
-                            f"Unexpected tables in schema: {extra_tables}. Schema evolution required."
-                        )
+                        raise RuntimeError(f"Unexpected tables in schema: {extra_tables}. Schema evolution required.")
                     elif missing_tables and extra_tables:
                         # Both missing and extra tables (complex evolution)
                         logger.error(

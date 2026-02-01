@@ -1,0 +1,43 @@
+{
+	"info": {
+		"_postman_id": "c3d4e5f6-a7b8-4c5d-0e1f-2a3b4c5d6e7f",
+		"name": "Delta Share - Health API",
+		"description": "Health check and system monitoring endpoints",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Health Check",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/health",
+					"host": ["{{base_url}}"],
+					"path": ["health"]
+				},
+				"description": "Basic health check that returns application status and metadata. This endpoint is lightweight and does not perform any external dependency checks. Used by Azure Web App health monitoring, load balancers, and Kubernetes liveness probes."
+			}
+		},
+		{
+			"name": "Test Blob Storage Logging",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/health/logging/test",
+					"host": ["{{base_url}}"],
+					"path": ["health", "logging", "test"]
+				},
+				"description": "Test blob storage logging by forcing a test log upload. Use this to verify that authentication is working, container exists or can be created, and write permissions are correct."
+			}
+		}
+	]
+}

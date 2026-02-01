@@ -4,10 +4,11 @@ Request Model
 Database model for share pack requests.
 """
 
-from pydantic import BaseModel
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from datetime import datetime
+
+from pydantic import BaseModel
 
 
 class Request(BaseModel):

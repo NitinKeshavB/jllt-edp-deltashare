@@ -4,8 +4,11 @@ Share Repository
 Repository for Delta Share CRUD operations with SCD Type 2 tracking.
 """
 
-from typing import List, Dict, Any
+from typing import Any
+from typing import Dict
+from typing import List
 from uuid import UUID
+
 import asyncpg
 
 from dbrx_api.workflow.db.repository_base import BaseRepository
@@ -43,9 +46,7 @@ class ShareRepository(BaseRepository):
             "is_deleted": False,
         }
 
-        return await self.create_or_update(
-            share_id, fields, created_by, "Provisioned from share pack"
-        )
+        return await self.create_or_update(share_id, fields, created_by, "Provisioned from share pack")
 
     async def list_by_share_pack(
         self,

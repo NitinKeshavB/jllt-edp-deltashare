@@ -5,7 +5,9 @@ Implements the UPDATE strategy for share pack provisioning.
 For MVP, this is a simplified stub.
 """
 
-from typing import Dict, Any
+from typing import Any
+from typing import Dict
+
 from loguru import logger
 
 from dbrx_api.workflow.orchestrator.status_tracker import StatusTracker
@@ -38,6 +40,7 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
 
         # For MVP, delegate to NEW strategy
         from dbrx_api.workflow.orchestrator.provisioning import provision_sharepack_new
+
         await provision_sharepack_new(pool, share_pack)
 
         # Production implementation would:

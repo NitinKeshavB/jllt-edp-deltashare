@@ -4,10 +4,13 @@ Sync Entity Models
 Database models for entities synced from external sources (Azure AD, Databricks).
 """
 
-from pydantic import BaseModel, Field
-from typing import List, Optional
-from uuid import UUID
 from datetime import datetime
+from typing import List
+from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel
+from pydantic import Field
 
 
 class User(BaseModel):

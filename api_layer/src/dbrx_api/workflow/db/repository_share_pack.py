@@ -4,13 +4,16 @@ Share Pack Repository
 Repository for share pack CRUD operations with SCD Type 2 tracking.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 from uuid import UUID
+
 import asyncpg
-from loguru import logger
 
 from dbrx_api.workflow.db.repository_base import BaseRepository
-from dbrx_api.workflow.enums import SharePackStatus, Strategy
+from dbrx_api.workflow.enums import SharePackStatus
 
 
 class SharePackRepository(BaseRepository):
@@ -99,8 +102,16 @@ class SharePackRepository(BaseRepository):
 
         fields = dict(current)
         # Remove SCD2 columns and entity_id
-        for key in ["record_id", "version", "created_by", "change_reason",
-                    "effective_from", "effective_to", "is_current", self.entity_id_col]:
+        for key in [
+            "record_id",
+            "version",
+            "created_by",
+            "change_reason",
+            "effective_from",
+            "effective_to",
+            "is_current",
+            self.entity_id_col,
+        ]:
             fields.pop(key, None)
 
         # Update status fields
@@ -141,8 +152,16 @@ class SharePackRepository(BaseRepository):
             raise ValueError(f"SharePack {share_pack_id} not found")
 
         fields = dict(current)
-        for key in ["record_id", "version", "created_by", "change_reason",
-                    "effective_from", "effective_to", "is_current", self.entity_id_col]:
+        for key in [
+            "record_id",
+            "version",
+            "created_by",
+            "change_reason",
+            "effective_from",
+            "effective_to",
+            "is_current",
+            self.entity_id_col,
+        ]:
             fields.pop(key, None)
 
         fields["tenant_id"] = tenant_id

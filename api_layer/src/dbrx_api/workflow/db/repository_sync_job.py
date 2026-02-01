@@ -4,9 +4,10 @@ Sync Job Repository
 Repository for sync job operations (append-only table).
 """
 
-from typing import List, Dict, Any, Optional
-from uuid import UUID, uuid4
-from datetime import datetime
+from typing import Optional
+from uuid import UUID
+from uuid import uuid4
+
 import asyncpg
 
 

@@ -6,6 +6,7 @@ Background task that polls the queue and triggers provisioning.
 
 import asyncio
 import json
+
 from loguru import logger
 
 
@@ -31,16 +32,13 @@ async def start_queue_consumer(queue_client, db_pool):
     while True:
         try:
             # Poll for messages
-            messages = queue_client.receive_messages(
-                max_messages=1,
-                visibility_timeout=600  # 10 minutes to process
-            )
+            messages = queue_client.receive_messages(max_messages=1, visibility_timeout=600)  # 10 minutes to process
 
             for msg in messages:
                 try:
                     body = json.loads(msg.content)
                     share_pack_id = body["share_pack_id"]
-                    share_pack_name = body.get("share_pack_name", "unknown")
+                    body.get("share_pack_name", "unknown")
 
                     logger.info(f"Processing share pack from queue: {share_pack_id}")
 

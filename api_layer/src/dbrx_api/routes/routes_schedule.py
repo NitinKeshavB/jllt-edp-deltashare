@@ -758,6 +758,24 @@ async def delete_schedule_by_job_name(
 
     pipeline_id = pipeline.pipeline_id
 
+    # Find the schedule/job by name and validate it's associated with this pipeline
+    schedules, _ = list_schedules_sdk(
+        dltshr_workspace_url=workspace_url,
+        pipeline_ids=[pipeline_id],
+    )
+
+    job_id = None
+    for schedule in schedules:
+        if schedule.get("job_name") == job_name:
+            job_id = schedule.get("job_id")
+            break
+
+    if not job_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Schedule '{job_name}' is not associated with pipeline '{pipeline_name}'",
+        )
+
     # Delete the schedule
     result = delete_schedule_for_pipeline_sdk(
         dltshr_workspace_url=workspace_url,

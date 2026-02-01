@@ -4,9 +4,12 @@ Metrics Repository
 Repository for job metrics and project cost operations (append-only tables).
 """
 
+from datetime import date
+from datetime import datetime
 from typing import Optional
-from uuid import UUID, uuid4
-from datetime import datetime, date
+from uuid import UUID
+from uuid import uuid4
+
 import asyncpg
 
 

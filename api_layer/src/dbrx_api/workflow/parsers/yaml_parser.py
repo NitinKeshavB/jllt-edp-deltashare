@@ -4,9 +4,10 @@ YAML Parser
 Parses YAML files into SharePackConfig models.
 """
 
-import yaml
 from pathlib import Path
 from typing import Union
+
+import yaml
 from loguru import logger
 
 from dbrx_api.workflow.models.share_pack import SharePackConfig
@@ -47,9 +48,7 @@ def parse_yaml(file_content: Union[str, bytes, Path]) -> SharePackConfig:
     # Validate and convert to SharePackConfig
     try:
         config = SharePackConfig(**data)
-        logger.debug(
-            f"Successfully parsed YAML: {len(config.recipient)} recipients, {len(config.share)} shares"
-        )
+        logger.debug(f"Successfully parsed YAML: {len(config.recipient)} recipients, {len(config.share)} shares")
         return config
     except Exception as e:
         logger.error(f"SharePackConfig validation error: {e}")

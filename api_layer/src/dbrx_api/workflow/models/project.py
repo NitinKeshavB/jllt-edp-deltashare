@@ -4,10 +4,12 @@ Project Model
 Database model for projects within tenants.
 """
 
-from pydantic import BaseModel, Field
-from typing import List, Optional
-from uuid import UUID
 from datetime import datetime
+from typing import List
+from uuid import UUID
+
+from pydantic import BaseModel
+from pydantic import Field
 
 
 class Project(BaseModel):

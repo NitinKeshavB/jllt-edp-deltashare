@@ -5,12 +5,15 @@ Parses Excel files into SharePackConfig models.
 Expected sheets: Metadata, Recipients, Shares, Pipelines
 """
 
-from typing import Union, BinaryIO
 from io import BytesIO
+from typing import BinaryIO
+from typing import Union
+
 from loguru import logger
 
 try:
     import openpyxl
+
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
@@ -78,9 +81,7 @@ def parse_excel(file_content: Union[bytes, BinaryIO]) -> SharePackConfig:
     # Validate and convert to SharePackConfig
     try:
         config = SharePackConfig(**config_dict)
-        logger.debug(
-            f"Successfully parsed Excel: {len(config.recipient)} recipients, {len(config.share)} shares"
-        )
+        logger.debug(f"Successfully parsed Excel: {len(config.recipient)} recipients, {len(config.share)} shares")
         return config
     except Exception as e:
         logger.error(f"SharePackConfig validation error: {e}")
@@ -204,13 +205,15 @@ def _parse_shares_sheet(wb) -> list:
             if recipient and recipient not in recipients:
                 recipients.append(recipient)
 
-        shares.append({
-            "name": share_name,
-            "share_assets": assets,
-            "recipients": recipients,
-            "delta_share": delta_share,
-            "pipelines": [],  # Will be populated from Pipelines sheet
-        })
+        shares.append(
+            {
+                "name": share_name,
+                "share_assets": assets,
+                "recipients": recipients,
+                "delta_share": delta_share,
+                "pipelines": [],  # Will be populated from Pipelines sheet
+            }
+        )
 
     return shares
 

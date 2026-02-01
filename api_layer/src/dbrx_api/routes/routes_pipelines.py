@@ -7,6 +7,7 @@ from databricks.sdk.service.pipelines import GetPipelineResponse
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Path
 from fastapi import Request
 from fastapi import Response
 from fastapi import status
@@ -80,15 +81,41 @@ def _get_pipeline_with_full_spec(workspace_url: str, pipeline_name: str) -> tupl
             "description": "Pipeline not found",
             "content": {"application/json": {"example": {"detail": "Pipeline not found"}}},
         },
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Invalid pipeline name",
+            "content": {
+                "application/json": {"example": {"detail": "Pipeline name cannot have leading or trailing spaces"}}
+            },
+        },
     },
 )
 async def get_pipeline_by_name(
     request: Request,
-    pipeline_name: str,
     response: Response,
+    pipeline_name: str = Path(..., min_length=1, description="Name of the pipeline (cannot be empty)"),
     workspace_url: str = Depends(get_workspace_url),
 ) -> GetPipelineResponse:
     """Get a specific pipeline by name."""
+    # Validate no leading or trailing spaces
+    if pipeline_name != pipeline_name.strip():
+        logger.warning(
+            "Pipeline name has leading or trailing spaces",
+            pipeline_name=pipeline_name,
+            stripped=pipeline_name.strip(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot have leading or trailing spaces",
+        )
+
+    # Additional validation for whitespace-only strings
+    if not pipeline_name.strip():
+        logger.warning("Pipeline name contains only whitespace")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot contain only whitespace",
+        )
+
     logger.info(
         "Getting pipeline by name",
         pipeline_name=pipeline_name,
@@ -175,6 +202,12 @@ async def list_pipelines_all(
             "description": "Pipeline already exists",
             "content": {"application/json": {"example": {"Message": "Pipeline already exists"}}},
         },
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Invalid pipeline name",
+            "content": {
+                "application/json": {"example": {"detail": "Pipeline name cannot have leading or trailing spaces"}}
+            },
+        },
         status.HTTP_422_UNPROCESSABLE_CONTENT: {
             "description": "Validation error",
             "content": {
@@ -196,13 +229,33 @@ async def list_pipelines_all(
 async def create_pipeline(
     request: Request,
     response: Response,
-    pipeline_name: str,
     create_request: CreatePipelineRequest,
+    pipeline_name: str = Path(..., min_length=1, description="Name of the pipeline (cannot be empty)"),
     workspace_url: str = Depends(get_workspace_url),
 ) -> Union[CreatePipelineResponse, GetPipelineResponse]:
     """
     Create a new DLT pipeline with validated configuration.
     """
+    # Validate no leading or trailing spaces
+    if pipeline_name != pipeline_name.strip():
+        logger.warning(
+            "Pipeline name has leading or trailing spaces",
+            pipeline_name=pipeline_name,
+            stripped=pipeline_name.strip(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot have leading or trailing spaces",
+        )
+
+    # Additional validation for whitespace-only strings
+    if not pipeline_name.strip():
+        logger.warning("Pipeline name contains only whitespace")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot contain only whitespace",
+        )
+
     # Extract configuration as dict with aliases (pipelines.* keys)
     configuration_dict = create_request.configuration.model_dump(by_alias=True)
 
@@ -261,6 +314,12 @@ async def create_pipeline(
             "description": "Pipeline deleted successfully",
             "content": {"application/json": {"example": {"message": "Pipeline deleted successfully"}}},
         },
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Invalid pipeline name",
+            "content": {
+                "application/json": {"example": {"detail": "Pipeline name cannot have leading or trailing spaces"}}
+            },
+        },
         status.HTTP_403_FORBIDDEN: {
             "description": "Permission denied to delete pipeline",
             "content": {
@@ -274,12 +333,32 @@ async def create_pipeline(
 async def delete_pipeline_by_name(
     request: Request,
     response: Response,
-    pipeline_name: str,
+    pipeline_name: str = Path(..., min_length=1, description="Name of the pipeline (cannot be empty)"),
     workspace_url: str = Depends(get_workspace_url),
 ):
     """
     Delete a DLT pipeline by name.
     """
+    # Validate no leading or trailing spaces
+    if pipeline_name != pipeline_name.strip():
+        logger.warning(
+            "Pipeline name has leading or trailing spaces",
+            pipeline_name=pipeline_name,
+            stripped=pipeline_name.strip(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot have leading or trailing spaces",
+        )
+
+    # Additional validation for whitespace-only strings
+    if not pipeline_name.strip():
+        logger.warning("Pipeline name contains only whitespace")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot contain only whitespace",
+        )
+
     logger.info(
         "Deleting pipeline",
         pipeline_name=pipeline_name,
@@ -394,8 +473,8 @@ async def delete_pipeline_by_name(
 async def update_pipeline_parameters(
     request: Request,
     response: Response,
-    pipeline_name: str,
     parameter_config: UpdatePipelineConfigurationModel,
+    pipeline_name: str = Path(..., min_length=1, description="Name of the pipeline (cannot be empty)"),
     workspace_url: str = Depends(get_workspace_url),
 ):
     """
@@ -407,6 +486,11 @@ async def update_pipeline_parameters(
     Updateable fields:
     - pipelines.keys: Primary key column(s)
     - pipelines.target_table: Target table name
+
+    **Keys Validation:**
+    When updating pipelines.keys, the API automatically validates that all specified keys
+    exist as columns in the source table using case-insensitive matching. If any keys are
+    invalid, the update will fail with a clear error message listing the invalid keys.
 
     The configuration will automatically include:
     - pipelines.sequence_by = "_commit_version" (auto-set)
@@ -421,6 +505,26 @@ async def update_pipeline_parameters(
     - Update only target_table: {"pipelines.target_table": "new_table_name"}
     - Update both: {"pipelines.keys": "id,timestamp", "pipelines.target_table": "updated_table"}
     """
+    # Validate no leading or trailing spaces
+    if pipeline_name != pipeline_name.strip():
+        logger.warning(
+            "Pipeline name has leading or trailing spaces",
+            pipeline_name=pipeline_name,
+            stripped=pipeline_name.strip(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot have leading or trailing spaces",
+        )
+
+    # Additional validation for whitespace-only strings
+    if not pipeline_name.strip():
+        logger.warning("Pipeline name contains only whitespace")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot contain only whitespace",
+        )
+
     # Extract new configuration fields (exclude None values)
     new_config_dict = parameter_config.model_dump(by_alias=True, exclude_none=True)
 
@@ -445,6 +549,64 @@ async def update_pipeline_parameters(
 
     # Update with new values
     merged_config.update(new_config_dict)
+
+    # Validate keys if they are being updated
+    if "pipelines.keys" in new_config_dict:
+        # Get source table from existing configuration
+        existing_config = (
+            dict(full_pipeline.spec.configuration) if full_pipeline.spec and full_pipeline.spec.configuration else {}
+        )
+        source_table = existing_config.get("pipelines.source_table")
+
+        if not source_table:
+            logger.error(
+                "Cannot validate keys: source table not found in existing configuration",
+                pipeline_name=pipeline_name,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot validate keys: source table not found in pipeline configuration",
+            )
+
+        new_keys = new_config_dict["pipelines.keys"]
+
+        logger.info(
+            "Validating new keys against source table",
+            pipeline_name=pipeline_name,
+            source_table=source_table,
+            new_keys=new_keys,
+        )
+
+        # Import the validation function
+        from dbrx_api.jobs.dbrx_pipelines import validate_pipeline_keys
+
+        # Validate the new keys
+        keys_validation = validate_pipeline_keys(
+            w_client=w_client,
+            source_table=source_table,
+            keys=new_keys,
+        )
+
+        if not keys_validation["success"]:
+            logger.error(
+                "Pipeline keys validation failed",
+                pipeline_name=pipeline_name,
+                source_table=source_table,
+                keys=new_keys,
+                invalid_keys=keys_validation["invalid_keys"],
+                error=keys_validation["message"],
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=keys_validation["message"],
+            )
+
+        logger.info(
+            "Pipeline keys validation passed",
+            pipeline_name=pipeline_name,
+            source_table=source_table,
+            valid_keys=keys_validation["valid_keys"],
+        )
 
     # Extract required fields from existing pipeline to preserve pipeline type and settings
     catalog = full_pipeline.spec.catalog if full_pipeline.spec else None
@@ -582,8 +744,8 @@ async def update_pipeline_parameters(
 async def update_pipeline_libraries(
     request: Request,
     response: Response,
-    pipeline_name: str,
     libraries_update: UpdatePipelineLibrariesModel,
+    pipeline_name: str = Path(..., min_length=1, description="Name of the pipeline (cannot be empty)"),
     workspace_url: str = Depends(get_workspace_url),
 ):
     """
@@ -609,6 +771,26 @@ async def update_pipeline_libraries(
     - Storage and serverless settings
     - All other pipeline specifications
     """
+    # Validate no leading or trailing spaces
+    if pipeline_name != pipeline_name.strip():
+        logger.warning(
+            "Pipeline name has leading or trailing spaces",
+            pipeline_name=pipeline_name,
+            stripped=pipeline_name.strip(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot have leading or trailing spaces",
+        )
+
+    # Additional validation for whitespace-only strings
+    if not pipeline_name.strip():
+        logger.warning("Pipeline name contains only whitespace")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot contain only whitespace",
+        )
+
     logger.info(
         "Updating pipeline libraries/root path",
         pipeline_name=pipeline_name,
@@ -803,8 +985,8 @@ async def update_pipeline_libraries(
 async def update_pipeline_notifications_add(
     request: Request,
     response: Response,
-    pipeline_name: str,
     notifications_add: UpdatePipelineNotificationsModel,
+    pipeline_name: str = Path(..., min_length=1, description="Name of the pipeline (cannot be empty)"),
     workspace_url: str = Depends(get_workspace_url),
 ):
     """
@@ -836,6 +1018,26 @@ async def update_pipeline_notifications_add(
     - All other pipeline specifications
     - EXISTING notifications (new ones are ADDED to them)
     """
+    # Validate no leading or trailing spaces
+    if pipeline_name != pipeline_name.strip():
+        logger.warning(
+            "Pipeline name has leading or trailing spaces",
+            pipeline_name=pipeline_name,
+            stripped=pipeline_name.strip(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot have leading or trailing spaces",
+        )
+
+    # Additional validation for whitespace-only strings
+    if not pipeline_name.strip():
+        logger.warning("Pipeline name contains only whitespace")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot contain only whitespace",
+        )
+
     logger.info(
         "Updating pipeline notifications",
         pipeline_name=pipeline_name,
@@ -1094,8 +1296,8 @@ async def update_pipeline_notifications_add(
 async def update_pipeline_notifications_remove(
     request: Request,
     response: Response,
-    pipeline_name: str,
     notifications_remove: UpdatePipelineNotificationsModel,
+    pipeline_name: str = Path(..., min_length=1, description="Name of the pipeline (cannot be empty)"),
     workspace_url: str = Depends(get_workspace_url),
 ):
     """
@@ -1126,6 +1328,26 @@ async def update_pipeline_notifications_remove(
     - Storage and serverless settings
     - All other pipeline specifications
     """
+    # Validate no leading or trailing spaces
+    if pipeline_name != pipeline_name.strip():
+        logger.warning(
+            "Pipeline name has leading or trailing spaces",
+            pipeline_name=pipeline_name,
+            stripped=pipeline_name.strip(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot have leading or trailing spaces",
+        )
+
+    # Additional validation for whitespace-only strings
+    if not pipeline_name.strip():
+        logger.warning("Pipeline name contains only whitespace")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot contain only whitespace",
+        )
+
     logger.info(
         "Removing pipeline notifications",
         pipeline_name=pipeline_name,
@@ -1382,8 +1604,8 @@ async def update_pipeline_notifications_remove(
 async def update_pipeline_continuous_mode(
     request: Request,
     response: Response,
-    pipeline_name: str,
     continuous_update: UpdatePipelineContinuousModel,
+    pipeline_name: str = Path(..., min_length=1, description="Name of the pipeline (cannot be empty)"),
     workspace_url: str = Depends(get_workspace_url),
 ):
     """
@@ -1408,6 +1630,26 @@ async def update_pipeline_continuous_mode(
     Note: This operation only updates the continuous mode setting. All other pipeline
     configurations remain unchanged.
     """
+    # Validate no leading or trailing spaces
+    if pipeline_name != pipeline_name.strip():
+        logger.warning(
+            "Pipeline name has leading or trailing spaces",
+            pipeline_name=pipeline_name,
+            stripped=pipeline_name.strip(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot have leading or trailing spaces",
+        )
+
+    # Additional validation for whitespace-only strings
+    if not pipeline_name.strip():
+        logger.warning("Pipeline name contains only whitespace")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot contain only whitespace",
+        )
+
     logger.info(
         "Updating pipeline continuous mode",
         pipeline_name=pipeline_name,
@@ -1546,7 +1788,7 @@ async def update_pipeline_continuous_mode(
 async def pipeline_full_refresh_endpoint(
     request: Request,
     response: Response,
-    pipeline_name: str,
+    pipeline_name: str = Path(..., min_length=1, description="Name of the pipeline (cannot be empty)"),
     workspace_url: str = Depends(get_workspace_url),
 ):
     """
@@ -1581,6 +1823,26 @@ async def pipeline_full_refresh_endpoint(
     Examples:
     - Start full refresh: `POST /pipelines/my-pipeline/full-refresh`
     """
+    # Validate no leading or trailing spaces
+    if pipeline_name != pipeline_name.strip():
+        logger.warning(
+            "Pipeline name has leading or trailing spaces",
+            pipeline_name=pipeline_name,
+            stripped=pipeline_name.strip(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot have leading or trailing spaces",
+        )
+
+    # Additional validation for whitespace-only strings
+    if not pipeline_name.strip():
+        logger.warning("Pipeline name contains only whitespace")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pipeline name cannot contain only whitespace",
+        )
+
     logger.info(
         "Starting full refresh for pipeline",
         pipeline_name=pipeline_name,

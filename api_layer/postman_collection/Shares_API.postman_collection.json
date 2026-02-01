@@ -1,0 +1,254 @@
+{
+	"info": {
+		"_postman_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
+		"name": "Delta Share - Shares API",
+		"description": "Complete API collection for managing Delta Share shares and permissions",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "workspace_url",
+			"value": "https://adb-xxxx.azuredatabricks.net",
+			"type": "string"
+		},
+		{
+			"key": "share_name",
+			"value": "test_share",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "List All Shares",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{base_url}}/shares?prefix=&page_size=100",
+					"host": ["{{base_url}}"],
+					"path": ["shares"],
+					"query": [
+						{
+							"key": "prefix",
+							"value": "",
+							"description": "Optional prefix filter for share names"
+						},
+						{
+							"key": "page_size",
+							"value": "100",
+							"description": "Maximum number of shares to return (default: 100)"
+						}
+					]
+				},
+				"description": "List all Delta Sharing shares with optional prefix filtering and pagination. Returns share name, owner, and creation details."
+			},
+			"response": []
+		},
+		{
+			"name": "Get Share by Name",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{base_url}}/shares/{{share_name}}",
+					"host": ["{{base_url}}"],
+					"path": ["shares", "{{share_name}}"]
+				},
+				"description": "Retrieve detailed information for a specific Delta Sharing share by name. Returns share metadata, owner, creation time, and comment."
+			},
+			"response": []
+		},
+		{
+			"name": "Create Share",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{base_url}}/shares/{{share_name}}?description=My Delta Share for partner data sharing",
+					"host": ["{{base_url}}"],
+					"path": ["shares", "{{share_name}}"],
+					"query": [
+						{
+							"key": "description",
+							"value": "My Delta Share for partner data sharing",
+							"description": "Description of the share"
+						},
+						{
+							"key": "storage_root",
+							"value": "abfss://container@storageaccount.dfs.core.windows.net/path",
+							"description": "Optional storage root path (e.g., abfss://container@account.dfs.core.windows.net/path). Disabled by default - enable only if needed.",
+							"disabled": true
+						}
+					]
+				},
+				"description": "Create a new Delta Sharing share for Databricks-to-Databricks data sharing. Share name must contain only alphanumeric characters, underscores, and hyphens. storage_root is optional - only provide if you need to specify a custom storage location."
+			},
+			"response": []
+		},
+		{
+			"name": "Delete Share",
+			"request": {
+				"method": "DELETE",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{base_url}}/shares/{{share_name}}",
+					"host": ["{{base_url}}"],
+					"path": ["shares", "{{share_name}}"]
+				},
+				"description": "Permanently delete a Delta Sharing share and all its associated permissions. User must be the owner. This will revoke access for all recipients."
+			},
+			"response": []
+		},
+		{
+			"name": "Add Data Objects to Share",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"tables\": [\n    \"catalog.schema.table1\",\n    \"catalog.schema.table2\"\n  ],\n  \"views\": [\n    \"catalog.schema.view1\"\n  ],\n  \"schemas\": [\n    \"catalog.schema\"\n  ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{base_url}}/shares/{{share_name}}/dataobject/add",
+					"host": ["{{base_url}}"],
+					"path": ["shares", "{{share_name}}", "dataobject", "add"]
+				},
+				"description": "Add data objects (tables, views, schemas) to an existing Delta Sharing share. Provide at least one type of object. Objects must exist in the workspace and user must have proper permissions. Use three-level namespace: catalog.schema.table"
+			},
+			"response": []
+		},
+		{
+			"name": "Revoke Data Objects from Share",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"tables\": [\n    \"catalog.schema.table1\"\n  ],\n  \"views\": [\n    \"catalog.schema.view1\"\n  ],\n  \"schemas\": []\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{base_url}}/shares/{{share_name}}/dataobject/revoke",
+					"host": ["{{base_url}}"],
+					"path": ["shares", "{{share_name}}", "dataobject", "revoke"]
+				},
+				"description": "Remove data objects (tables, views, schemas) from a Delta Sharing share. User must be the owner. Recipients will lose access to the revoked objects immediately."
+			},
+			"response": []
+		},
+		{
+			"name": "Add Recipient to Share",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{base_url}}/shares/{{share_name}}/recipients/add?recipient_name=partner_recipient",
+					"host": ["{{base_url}}"],
+					"path": ["shares", "{{share_name}}", "recipients", "add"],
+					"query": [
+						{
+							"key": "recipient_name",
+							"value": "partner_recipient",
+							"description": "Name of the recipient to grant access"
+						}
+					]
+				},
+				"description": "Grant SELECT permission to a recipient for a Delta Sharing share. User must be the share owner. Recipient must already exist in the workspace."
+			},
+			"response": []
+		},
+		{
+			"name": "Remove Recipient from Share",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{base_url}}/shares/{{share_name}}/recipients/remove?recipient_name=partner_recipient",
+					"host": ["{{base_url}}"],
+					"path": ["shares", "{{share_name}}", "recipients", "remove"],
+					"query": [
+						{
+							"key": "recipient_name",
+							"value": "partner_recipient",
+							"description": "Name of the recipient to revoke access from"
+						}
+					]
+				},
+				"description": "Revoke SELECT permission from a recipient for a Delta Sharing share. User must be the share owner. The recipient will immediately lose access to all data objects in the share."
+			},
+			"response": []
+		}
+	]
+}

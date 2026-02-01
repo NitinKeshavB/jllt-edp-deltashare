@@ -9,9 +9,11 @@ Output:
     sample_sharepack.xlsx
 """
 
-import openpyxl
-from openpyxl.styles import Font, PatternFill
 from pathlib import Path
+
+import openpyxl
+from openpyxl.styles import Font
+from openpyxl.styles import PatternFill
 
 
 def create_sample_excel():
@@ -72,7 +74,14 @@ def create_sample_excel():
 
     # Data
     recipient_data = [
-        ("test-recipient-d2o", "D2O", "test@example.com", "", "192.168.1.0/24,10.0.0.50", "Test D2O recipient for validation"),
+        (
+            "test-recipient-d2o",
+            "D2O",
+            "test@example.com",
+            "",
+            "192.168.1.0/24,10.0.0.50",
+            "Test D2O recipient for validation",
+        ),
         ("test-recipient-d2d", "D2D", "", "aws:us-west-2:abc-123-def-456", "", "Test D2D recipient for validation"),
     ]
 
@@ -82,7 +91,7 @@ def create_sample_excel():
 
     # Column widths
     ws_recipients.column_dimensions["A"].width = 20  # name
-    ws_recipients.column_dimensions["B"].width = 8   # type
+    ws_recipients.column_dimensions["B"].width = 8  # type
     ws_recipients.column_dimensions["C"].width = 25  # email
     ws_recipients.column_dimensions["D"].width = 30  # metastore_id
     ws_recipients.column_dimensions["E"].width = 30  # allowed_ips

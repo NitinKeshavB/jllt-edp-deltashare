@@ -6,10 +6,12 @@ Wraps Azure Storage Queue for enqueuing and dequeuing share pack provisioning ta
 
 import json
 from typing import Optional
+
 from loguru import logger
 
 try:
     from azure.storage.queue import QueueClient
+
     AZURE_QUEUE_AVAILABLE = True
 except ImportError:
     logger.warning("azure-storage-queue not installed - workflow queue will not work")
@@ -44,10 +46,7 @@ class SharePackQueueClient:
 
     def _initialize_queue(self):
         """Initialize queue client and create queue if doesn't exist."""
-        self.client = QueueClient.from_connection_string(
-            self.connection_string,
-            self.queue_name
-        )
+        self.client = QueueClient.from_connection_string(self.connection_string, self.queue_name)
 
         # Create queue (idempotent - no error if already exists)
         try:
@@ -101,10 +100,7 @@ class SharePackQueueClient:
             Exception: If queue operation fails
         """
         try:
-            messages = self.client.receive_messages(
-                max_messages=max_messages,
-                visibility_timeout=visibility_timeout
-            )
+            messages = self.client.receive_messages(max_messages=max_messages, visibility_timeout=visibility_timeout)
             return list(messages)  # Convert generator to list
         except Exception as e:
             logger.error(f"Failed to receive messages from queue: {e}")

@@ -4,41 +4,48 @@ Workflow API Routes
 REST API endpoints for share pack workflow management.
 """
 
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status, Request
-from fastapi.responses import JSONResponse
-from uuid import UUID, uuid4
 from datetime import datetime
+from uuid import UUID
+from uuid import uuid4
+
+from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import File
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi import UploadFile
+from fastapi import status
+from fastapi.responses import JSONResponse
 from loguru import logger
 
-from dbrx_api.dependencies import get_workspace_url, get_settings
+from dbrx_api.dependencies import get_settings
+from dbrx_api.dependencies import get_workspace_url
+from dbrx_api.schemas.schemas_workflow import SharePackStatusResponse
+from dbrx_api.schemas.schemas_workflow import SharePackUploadResponse
+from dbrx_api.schemas.schemas_workflow import WorkflowHealthResponse
 from dbrx_api.settings import Settings
-from dbrx_api.schemas.schemas_workflow import (
-    SharePackUploadResponse,
-    SharePackStatusResponse,
-    WorkflowHealthResponse,
-)
 
 ROUTER_WORKFLOW = APIRouter(tags=["Workflow"], prefix="/workflow")
 
 
 @ROUTER_WORKFLOW.post(
-    "/sharepack/upload",
+    "/sharepack/upload_and_validate",
     response_model=SharePackUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload share pack for provisioning",
+    summary="Upload and validate share pack for provisioning",
     responses={
-        202: {"description": "Share pack uploaded and queued for provisioning"},
+        202: {"description": "Share pack uploaded, validated, and queued for provisioning"},
         400: {"description": "Invalid file format or validation error"},
     },
 )
-async def upload_sharepack(
+async def upload_and_validate_sharepack(
     request: Request,
     file: UploadFile = File(..., description="YAML or Excel share pack configuration file"),
     workspace_url: str = Depends(get_workspace_url),
     settings: Settings = Depends(get_settings),
 ):
     """
-    Upload a share pack configuration file (YAML or Excel) for provisioning.
+    Upload and validate a share pack configuration file (YAML or Excel) for provisioning.
 
     Returns 202 Accepted - processing happens asynchronously via Azure Storage Queue.
     """
@@ -51,9 +58,7 @@ async def upload_sharepack(
 
     try:
         config = parse_sharepack_file(content, file.filename)
-        logger.debug(
-            f"Parsed share pack: {len(config.recipient)} recipients, {len(config.share)} shares"
-        )
+        logger.debug(f"Parsed share pack: {len(config.recipient)} recipients, {len(config.share)} shares")
     except Exception as e:
         logger.warning(f"Parse error: {e}")
         raise HTTPException(
@@ -84,9 +89,7 @@ async def upload_sharepack(
 
         # Update strategy if auto-corrected
         if detection_result.strategy_changed:
-            logger.warning(
-                f"Strategy auto-corrected: {user_strategy} → {detection_result.final_strategy}"
-            )
+            logger.warning(f"Strategy auto-corrected: {user_strategy} → {detection_result.final_strategy}")
             config.metadata.strategy = detection_result.final_strategy
 
         validation_warnings = detection_result.warnings
@@ -97,9 +100,7 @@ async def upload_sharepack(
     except Exception as e:
         # If detection fails, use user's original strategy
         logger.error(f"Strategy detection failed: {e}", exc_info=True)
-        validation_warnings = [
-            f"Could not auto-detect strategy: {str(e)}. Using '{user_strategy}' as specified."
-        ]
+        validation_warnings = [f"Could not auto-detect strategy: {str(e)}. Using '{user_strategy}' as specified."]
 
     # 3. Store in database
     from dbrx_api.workflow.db.repository_share_pack import SharePackRepository
@@ -226,7 +227,7 @@ async def workflow_health(
     # Check queue
     queue_healthy = False
     try:
-        queue_length = queue_client.get_queue_length()
+        queue_client.get_queue_length()
         queue_healthy = True
     except Exception as e:
         logger.error(f"Queue health check failed: {e}")

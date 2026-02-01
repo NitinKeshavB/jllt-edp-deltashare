@@ -5,20 +5,22 @@ Base class providing common SCD Type 2 operations for all repositories.
 All concrete repositories inherit from this class and add domain-specific queries.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
 from uuid import UUID
+
 import asyncpg
 from loguru import logger
 
-from dbrx_api.workflow.db.scd2 import (
-    expire_and_insert_scd2,
-    get_current_version,
-    get_all_current_versions,
-    get_history,
-    soft_delete_scd2,
-    restore_deleted_entity,
-    get_point_in_time_version,
-)
+from dbrx_api.workflow.db.scd2 import expire_and_insert_scd2
+from dbrx_api.workflow.db.scd2 import get_all_current_versions
+from dbrx_api.workflow.db.scd2 import get_current_version
+from dbrx_api.workflow.db.scd2 import get_history
+from dbrx_api.workflow.db.scd2 import get_point_in_time_version
+from dbrx_api.workflow.db.scd2 import restore_deleted_entity
+from dbrx_api.workflow.db.scd2 import soft_delete_scd2
 
 
 class BaseRepository:
@@ -58,9 +60,7 @@ class BaseRepository:
             Dict of row data or None if not found
         """
         async with self.pool.acquire() as conn:
-            return await get_current_version(
-                conn, self.table, self.entity_id_col, entity_id, include_deleted
-            )
+            return await get_current_version(conn, self.table, self.entity_id_col, entity_id, include_deleted)
 
     async def get_all_current(
         self,
@@ -110,9 +110,7 @@ class BaseRepository:
             Dict of row data or None if not found
         """
         async with self.pool.acquire() as conn:
-            return await get_point_in_time_version(
-                conn, self.table, self.entity_id_col, entity_id, timestamp
-            )
+            return await get_point_in_time_version(conn, self.table, self.entity_id_col, entity_id, timestamp)
 
     async def create_or_update(
         self,

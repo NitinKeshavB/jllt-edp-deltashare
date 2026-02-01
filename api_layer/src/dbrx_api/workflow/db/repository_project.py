@@ -4,8 +4,13 @@ Project Repository
 Repository for project CRUD operations with SCD Type 2 tracking.
 """
 
-from typing import List, Dict, Any, Optional
-from uuid import UUID, uuid4
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from uuid import UUID
+from uuid import uuid4
+
 import asyncpg
 
 from dbrx_api.workflow.db.repository_base import BaseRepository
@@ -50,9 +55,7 @@ class ProjectRepository(BaseRepository):
             "is_deleted": False,
         }
 
-        return await self.create_or_update(
-            project_id, fields, created_by, "Initial creation"
-        )
+        return await self.create_or_update(project_id, fields, created_by, "Initial creation")
 
     async def get_by_tenant_and_name(
         self,

@@ -4,8 +4,9 @@ This module handles schema initialization by executing the schema.sql file.
 All DDL is stored in schema.sql for maintainability.
 """
 
-import asyncpg
 from pathlib import Path
+
+import asyncpg
 from loguru import logger
 
 
@@ -169,6 +170,7 @@ if __name__ == "__main__":
         python -m dbrx_api.workflow.db.migrations
     """
     import asyncio
+
     from dbrx_api.settings import Settings
 
     async def main():
@@ -195,9 +197,7 @@ if __name__ == "__main__":
             if verification["all_present"]:
                 logger.info("✅ All 16 tables present")
             else:
-                logger.warning(
-                    f"⚠️  Missing tables: {verification['missing_tables']}"
-                )
+                logger.warning(f"⚠️  Missing tables: {verification['missing_tables']}")
 
             # Show counts
             counts = await get_table_counts(pool)

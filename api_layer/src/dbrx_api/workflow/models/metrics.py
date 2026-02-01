@@ -4,10 +4,12 @@ Metrics Models
 Database models for job metrics and project costs (append-only tables).
 """
 
-from pydantic import BaseModel
+from datetime import date
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from datetime import datetime, date
+
+from pydantic import BaseModel
 
 
 class JobMetrics(BaseModel):

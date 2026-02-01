@@ -10,8 +10,10 @@ This provides the best user experience by:
 - Warning users when strategy is auto-corrected
 """
 
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from datetime import datetime
+from datetime import timezone
+from typing import Dict
+from typing import List
 
 from databricks.sdk import WorkspaceClient
 from loguru import logger
@@ -74,15 +76,13 @@ class StrategyDetectionResult:
         if self.existing_recipients:
             parts.append(
                 f"Found {len(self.existing_recipients)} existing recipient(s): "
-                f"{', '.join(self.existing_recipients[:3])}"
-                + ("..." if len(self.existing_recipients) > 3 else "")
+                f"{', '.join(self.existing_recipients[:3])}" + ("..." if len(self.existing_recipients) > 3 else "")
             )
 
         if self.existing_shares:
             parts.append(
                 f"Found {len(self.existing_shares)} existing share(s): "
-                f"{', '.join(self.existing_shares[:3])}"
-                + ("..." if len(self.existing_shares) > 3 else "")
+                f"{', '.join(self.existing_shares[:3])}" + ("..." if len(self.existing_shares) > 3 else "")
             )
 
         if self.new_recipients:
@@ -201,8 +201,7 @@ async def detect_optimal_strategy(
                 + ("..." if len(result.existing_recipients) > 5 else "")
             )
             logger.info(
-                f"Existing shares: {result.existing_shares[:5]}"
-                + ("..." if len(result.existing_shares) > 5 else "")
+                f"Existing shares: {result.existing_shares[:5]}" + ("..." if len(result.existing_shares) > 5 else "")
             )
 
         else:
@@ -264,9 +263,7 @@ async def validate_strategy_feasibility(
 
         if strategy == "UPDATE":
             # For UPDATE, at least some resources should exist
-            has_existing = bool(
-                (config_recipients & existing_recipients) or (config_shares & existing_shares)
-            )
+            has_existing = bool((config_recipients & existing_recipients) or (config_shares & existing_shares))
 
             if not has_existing:
                 warnings.append(

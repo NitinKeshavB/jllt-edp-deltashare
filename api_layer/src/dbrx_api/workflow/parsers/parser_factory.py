@@ -4,7 +4,9 @@ Parser Factory
 Auto-detects file format and dispatches to appropriate parser.
 """
 
-from typing import Union, BinaryIO
+from typing import BinaryIO
+from typing import Union
+
 from loguru import logger
 
 from dbrx_api.workflow.models.share_pack import SharePackConfig
@@ -39,16 +41,16 @@ def parse_sharepack_file(
 
     if ext in ("yaml", "yml"):
         from dbrx_api.workflow.parsers.yaml_parser import parse_yaml
+
         return parse_yaml(file_content)
 
     elif ext in ("xlsx", "xls"):
         from dbrx_api.workflow.parsers.excel_parser import parse_excel
+
         return parse_excel(file_content)
 
     else:
-        raise ValueError(
-            f"Unsupported file format: .{ext} (supported: .yaml, .yml, .xlsx, .xls)"
-        )
+        raise ValueError(f"Unsupported file format: .{ext} (supported: .yaml, .yml, .xlsx, .xls)")
 
 
 def validate_sharepack_config(config: SharePackConfig) -> list[str]:
@@ -81,15 +83,11 @@ def validate_sharepack_config(config: SharePackConfig) -> list[str]:
     # Check for D2D recipients without org ID
     for recipient in config.recipient:
         if recipient.type == "D2D" and not recipient.recipient_databricks_org:
-            warnings.append(
-                f"D2D recipient '{recipient.name}' missing recipient_databricks_org"
-            )
+            warnings.append(f"D2D recipient '{recipient.name}' missing recipient_databricks_org")
 
     # Check for D2O recipients without IP list (warning only)
     for recipient in config.recipient:
         if recipient.type == "D2O" and not recipient.recipient_ips:
-            warnings.append(
-                f"D2O recipient '{recipient.name}' has no IP access list (will allow all IPs)"
-            )
+            warnings.append(f"D2O recipient '{recipient.name}' has no IP access list (will allow all IPs)")
 
     return warnings

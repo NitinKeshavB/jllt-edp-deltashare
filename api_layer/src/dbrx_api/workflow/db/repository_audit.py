@@ -4,8 +4,12 @@ Audit Trail Repository
 Repository for audit trail operations (append-only table).
 """
 
-from typing import Optional, Dict, Any
-from uuid import UUID, uuid4
+from typing import Any
+from typing import Dict
+from typing import Optional
+from uuid import UUID
+from uuid import uuid4
+
 import asyncpg
 
 

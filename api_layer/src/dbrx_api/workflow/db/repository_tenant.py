@@ -4,8 +4,13 @@ Tenant Repository
 Repository for tenant (business line) CRUD operations with SCD Type 2 tracking.
 """
 
-from typing import List, Dict, Any, Optional
-from uuid import UUID, uuid4
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from uuid import UUID
+from uuid import uuid4
+
 import asyncpg
 
 from dbrx_api.workflow.db.repository_base import BaseRepository
@@ -56,9 +61,7 @@ class TenantRepository(BaseRepository):
             "is_deleted": False,
         }
 
-        return await self.create_or_update(
-            tenant_id, fields, created_by, "Initial creation"
-        )
+        return await self.create_or_update(tenant_id, fields, created_by, "Initial creation")
 
     async def get_by_name(
         self,
@@ -151,9 +154,7 @@ class TenantRegionRepository(BaseRepository):
             "is_deleted": False,
         }
 
-        return await self.create_or_update(
-            tenant_region_id, fields, created_by, "Initial creation"
-        )
+        return await self.create_or_update(tenant_region_id, fields, created_by, "Initial creation")
 
     async def get_by_tenant_and_region(
         self,

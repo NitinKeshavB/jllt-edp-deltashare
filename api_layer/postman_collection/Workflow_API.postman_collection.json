@@ -1,0 +1,119 @@
+{
+	"info": {
+		"_postman_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
+		"name": "Delta Share - Workflow API",
+		"description": "API collection for share pack workflow management and provisioning",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "workspace_url",
+			"value": "https://adb-xxxx.azuredatabricks.net",
+			"type": "string"
+		},
+		{
+			"key": "share_pack_id",
+			"value": "550e8400-e29b-41d4-a716-446655440000",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Upload and Validate Share Pack (YAML)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "/path/to/sharepack.yaml",
+							"description": "YAML share pack configuration file"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{base_url}}/workflow/sharepack/upload_and_validate",
+					"host": ["{{base_url}}"],
+					"path": ["workflow", "sharepack", "upload_and_validate"]
+				},
+				"description": "Upload a share pack configuration file (YAML) for provisioning. Returns 202 Accepted - processing happens asynchronously via Azure Storage Queue. Includes smart strategy auto-detection."
+			}
+		},
+		{
+			"name": "Upload and Validate Share Pack (Excel)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "/path/to/sharepack.xlsx",
+							"description": "Excel share pack configuration file"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{base_url}}/workflow/sharepack/upload_and_validate",
+					"host": ["{{base_url}}"],
+					"path": ["workflow", "sharepack", "upload_and_validate"]
+				},
+				"description": "Upload a share pack configuration file (Excel) for provisioning. Returns 202 Accepted - processing happens asynchronously via Azure Storage Queue. Includes smart strategy auto-detection."
+			}
+		},
+		{
+			"name": "Get Share Pack Status",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{base_url}}/workflow/sharepack/{{share_pack_id}}",
+					"host": ["{{base_url}}"],
+					"path": ["workflow", "sharepack", "{{share_pack_id}}"]
+				},
+				"description": "Get current status of a share pack by ID. Returns status (IN_PROGRESS, COMPLETED, FAILED), provisioning status, and error messages if applicable."
+			}
+		},
+		{
+			"name": "Workflow Health Check",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/workflow/health",
+					"host": ["{{base_url}}"],
+					"path": ["workflow", "health"]
+				},
+				"description": "Check workflow system health. Verifies database connection, queue connection, and database schema (table count). Returns 503 if unhealthy."
+			}
+		}
+	]
+}
