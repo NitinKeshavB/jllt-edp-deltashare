@@ -8,17 +8,27 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "http://localhost:8000",
+			"value": "https://your-api.azurewebsites.net",
 			"type": "string"
 		},
 		{
 			"key": "workspace_url",
-			"value": "https://adb-xxxx.azuredatabricks.net",
+			"value": "https://adb-1234567890123456.12.azuredatabricks.net",
+			"type": "string"
+		},
+		{
+			"key": "subscription_key",
+			"value": "your-subscription-key-here",
 			"type": "string"
 		},
 		{
 			"key": "share_name",
 			"value": "test_share",
+			"type": "string"
+		},
+		{
+			"key": "recipient_name",
+			"value": "test_recipient",
 			"type": "string"
 		}
 	],
@@ -31,6 +41,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],
@@ -51,7 +66,7 @@
 						}
 					]
 				},
-				"description": "List all Delta Sharing shares with optional prefix filtering and pagination. Returns share name, owner, and creation details."
+				"description": "List all shares in the workspace with optional prefix filtering and pagination."
 			},
 			"response": []
 		},
@@ -64,6 +79,11 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"url": {
@@ -71,7 +91,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}"]
 				},
-				"description": "Retrieve detailed information for a specific Delta Sharing share by name. Returns share metadata, owner, creation time, and comment."
+				"description": "Get details of a specific share including its data objects and recipients."
 			},
 			"response": []
 		},
@@ -84,27 +104,31 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"url": {
-					"raw": "{{base_url}}/shares/{{share_name}}?description=My Delta Share for partner data sharing",
+					"raw": "{{base_url}}/shares/{{share_name}}?description=Test share for analytics&storage_root=",
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}"],
 					"query": [
 						{
 							"key": "description",
-							"value": "My Delta Share for partner data sharing",
-							"description": "Description of the share"
+							"value": "Test share for analytics",
+							"description": "Share description (required)"
 						},
 						{
 							"key": "storage_root",
-							"value": "abfss://container@storageaccount.dfs.core.windows.net/path",
-							"description": "Optional storage root path (e.g., abfss://container@account.dfs.core.windows.net/path). Disabled by default - enable only if needed.",
-							"disabled": true
+							"value": "",
+							"description": "Optional storage root path"
 						}
 					]
 				},
-				"description": "Create a new Delta Sharing share for Databricks-to-Databricks data sharing. Share name must contain only alphanumeric characters, underscores, and hyphens. storage_root is optional - only provide if you need to specify a custom storage location."
+				"description": "Create a new share with the specified name and description."
 			},
 			"response": []
 		},
@@ -117,6 +141,11 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"url": {
@@ -124,7 +153,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}"]
 				},
-				"description": "Permanently delete a Delta Sharing share and all its associated permissions. User must be the owner. This will revoke access for all recipients."
+				"description": "Delete an existing share. This will remove all data objects and recipients from the share."
 			},
 			"response": []
 		},
@@ -139,37 +168,8 @@
 						"type": "text"
 					},
 					{
-						"key": "Content-Type",
-						"value": "application/json",
-						"type": "text"
-					}
-				],
-				"body": {
-					"mode": "raw",
-					"raw": "{\n  \"tables\": [\n    \"catalog.schema.table1\",\n    \"catalog.schema.table2\"\n  ],\n  \"views\": [\n    \"catalog.schema.view1\"\n  ],\n  \"schemas\": [\n    \"catalog.schema\"\n  ]\n}",
-					"options": {
-						"raw": {
-							"language": "json"
-						}
-					}
-				},
-				"url": {
-					"raw": "{{base_url}}/shares/{{share_name}}/dataobject/add",
-					"host": ["{{base_url}}"],
-					"path": ["shares", "{{share_name}}", "dataobject", "add"]
-				},
-				"description": "Add data objects (tables, views, schemas) to an existing Delta Sharing share. Provide at least one type of object. Objects must exist in the workspace and user must have proper permissions. Use three-level namespace: catalog.schema.table"
-			},
-			"response": []
-		},
-		{
-			"name": "Revoke Data Objects from Share",
-			"request": {
-				"method": "PUT",
-				"header": [
-					{
-						"key": "X-Workspace-URL",
-						"value": "{{workspace_url}}",
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					},
 					{
@@ -180,19 +180,48 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n  \"tables\": [\n    \"catalog.schema.table1\"\n  ],\n  \"views\": [\n    \"catalog.schema.view1\"\n  ],\n  \"schemas\": []\n}",
-					"options": {
-						"raw": {
-							"language": "json"
-						}
+					"raw": "{\n\t\"tables\": [\n\t\t\"catalog.schema.table1\",\n\t\t\"catalog.schema.table2\"\n\t],\n\t\"views\": [],\n\t\"schemas\": []\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/shares/{{share_name}}/dataobject/add",
+					"host": ["{{base_url}}"],
+					"path": ["shares", "{{share_name}}", "dataobject", "add"]
+				},
+				"description": "Add tables, views, or schemas to a share. Provide at least one data object type."
+			},
+			"response": []
+		},
+		{
+			"name": "Remove Data Objects from Share",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
 					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n\t\"tables\": [\n\t\t\"catalog.schema.table1\"\n\t],\n\t\"views\": [],\n\t\"schemas\": []\n}"
 				},
 				"url": {
 					"raw": "{{base_url}}/shares/{{share_name}}/dataobject/revoke",
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}", "dataobject", "revoke"]
 				},
-				"description": "Remove data objects (tables, views, schemas) from a Delta Sharing share. User must be the owner. Recipients will lose access to the revoked objects immediately."
+				"description": "Remove tables, views, or schemas from a share."
 			},
 			"response": []
 		},
@@ -205,21 +234,26 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"url": {
-					"raw": "{{base_url}}/shares/{{share_name}}/recipients/add?recipient_name=partner_recipient",
+					"raw": "{{base_url}}/shares/{{share_name}}/recipients/add?recipient_name={{recipient_name}}",
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}", "recipients", "add"],
 					"query": [
 						{
 							"key": "recipient_name",
-							"value": "partner_recipient",
-							"description": "Name of the recipient to grant access"
+							"value": "{{recipient_name}}",
+							"description": "Name of the recipient to add (required)"
 						}
 					]
 				},
-				"description": "Grant SELECT permission to a recipient for a Delta Sharing share. User must be the share owner. Recipient must already exist in the workspace."
+				"description": "Grant a recipient access to this share."
 			},
 			"response": []
 		},
@@ -232,21 +266,26 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"url": {
-					"raw": "{{base_url}}/shares/{{share_name}}/recipients/remove?recipient_name=partner_recipient",
+					"raw": "{{base_url}}/shares/{{share_name}}/recipients/remove?recipient_name={{recipient_name}}",
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}", "recipients", "remove"],
 					"query": [
 						{
 							"key": "recipient_name",
-							"value": "partner_recipient",
-							"description": "Name of the recipient to revoke access from"
+							"value": "{{recipient_name}}",
+							"description": "Name of the recipient to remove (required)"
 						}
 					]
 				},
-				"description": "Revoke SELECT permission from a recipient for a Delta Sharing share. User must be the share owner. The recipient will immediately lose access to all data objects in the share."
+				"description": "Revoke a recipient's access to this share."
 			},
 			"response": []
 		}

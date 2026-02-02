@@ -1,0 +1,119 @@
+{
+	"info": {
+		"_postman_id": "catalog-api-collection",
+		"name": "Delta Share - Catalog API",
+		"description": "Unity Catalog management endpoints for creating, listing, and retrieving catalogs",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "https://your-api.azurewebsites.net",
+			"type": "string"
+		},
+		{
+			"key": "workspace_url",
+			"value": "https://adb-1234567890123456.12.azuredatabricks.net",
+			"type": "string"
+		},
+		{
+			"key": "subscription_key",
+			"value": "your-subscription-key-here",
+			"type": "string"
+		},
+		{
+			"key": "catalog_name",
+			"value": "my_catalog",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Create Catalog",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text",
+						"description": "Databricks workspace URL"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n\t\"comment\": \"Catalog for team analytics\",\n\t\"external_location\": null\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/catalogs/{{catalog_name}}",
+					"host": ["{{base_url}}"],
+					"path": ["catalogs", "{{catalog_name}}"]
+				},
+				"description": "Create a new Unity Catalog. Optionally specify an external location for storage. The service principal must have CREATE CATALOG privilege."
+			},
+			"response": []
+		},
+		{
+			"name": "Get Catalog",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text",
+						"description": "Databricks workspace URL"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{base_url}}/catalogs/{{catalog_name}}",
+					"host": ["{{base_url}}"],
+					"path": ["catalogs", "{{catalog_name}}"]
+				},
+				"description": "Get details about a specific catalog. Returns catalog name, exists flag, and owner information."
+			},
+			"response": []
+		},
+		{
+			"name": "List All Catalogs",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-Workspace-URL",
+						"value": "{{workspace_url}}",
+						"type": "text",
+						"description": "Databricks workspace URL"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{base_url}}/catalogs",
+					"host": ["{{base_url}}"],
+					"path": ["catalogs"]
+				},
+				"description": "List all Unity Catalogs accessible to the service principal. Returns catalog names and owners."
+			},
+			"response": []
+		}
+	]
+}

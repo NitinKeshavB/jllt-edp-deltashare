@@ -8,12 +8,17 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "http://localhost:8000",
+			"value": "https://your-api.azurewebsites.net",
 			"type": "string"
 		},
 		{
 			"key": "workspace_url",
 			"value": "https://adb-xxxx.azuredatabricks.net",
+			"type": "string"
+		},
+		{
+			"key": "subscription_key",
+			"value": "your-subscription-key-here",
 			"type": "string"
 		},
 		{
@@ -31,6 +36,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],
@@ -62,6 +72,11 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"body": {
@@ -91,6 +106,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],

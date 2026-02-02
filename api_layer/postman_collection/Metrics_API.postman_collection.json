@@ -8,7 +8,7 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "http://localhost:8000",
+			"value": "https://your-api.azurewebsites.net",
 			"type": "string"
 		},
 		{
@@ -17,8 +17,18 @@
 			"type": "string"
 		},
 		{
+			"key": "subscription_key",
+			"value": "your-subscription-key-here",
+			"type": "string"
+		},
+		{
 			"key": "pipeline_name",
 			"value": "test_pipeline",
+			"type": "string"
+		},
+		{
+			"key": "start_timestamp",
+			"value": "2024-01-23T10:30:00Z",
 			"type": "string"
 		}
 	],
@@ -31,6 +41,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],
@@ -58,6 +73,11 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"url": {
@@ -84,6 +104,11 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"url": {
@@ -109,6 +134,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],

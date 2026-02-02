@@ -8,12 +8,17 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "http://localhost:8000",
+			"value": "https://your-api.azurewebsites.net",
 			"type": "string"
 		},
 		{
 			"key": "workspace_url",
 			"value": "https://adb-xxxx.azuredatabricks.net",
+			"type": "string"
+		},
+		{
+			"key": "subscription_key",
+			"value": "your-subscription-key-here",
 			"type": "string"
 		},
 		{
@@ -24,6 +29,16 @@
 		{
 			"key": "job_name",
 			"value": "daily_etl_job",
+			"type": "string"
+		},
+		{
+			"key": "cron_expression",
+			"value": "0 0 12 * * ?",
+			"type": "string"
+		},
+		{
+			"key": "time_zone",
+			"value": "UTC",
 			"type": "string"
 		}
 	],
@@ -36,6 +51,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],
@@ -68,6 +88,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],
@@ -130,6 +155,11 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"url": {
@@ -156,6 +186,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],
@@ -184,6 +219,11 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
+						"type": "text"
 					}
 				],
 				"url": {
@@ -203,6 +243,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Ocp-Apim-Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],

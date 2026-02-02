@@ -157,14 +157,17 @@ def validate_and_prepare_catalog(
     catalog_name: str,
 ) -> dict:
     """
-    Validate catalog exists, create if it doesn't, and grant privileges to service principal.
+    Validate that catalog exists.
+
+    NOTE: This function NO LONGER auto-creates catalogs. Catalogs must be created
+    via the dedicated /catalogs/{catalog_name} endpoint before creating pipelines.
 
     Args:
         w_client: WorkspaceClient instance
         catalog_name: Catalog name
 
     Returns:
-        dict with 'success' (bool), 'message' (str), 'created' (bool)
+        dict with 'success' (bool), 'message' (str), 'exists' (bool)
     """
     try:
         # Check if catalog exists
@@ -177,105 +180,22 @@ def validate_and_prepare_catalog(
             )
             return {
                 "success": True,
-                "message": f"Catalog '{catalog_name}' exists",
-                "created": False,
+                "message": f"Catalog '{catalog_name}' is ready",
+                "exists": True,
             }
         except Exception as e:
             error_msg = str(e).lower()
             if "does not exist" in error_msg or "not found" in error_msg or "catalog_not_found" in error_msg:
-                # Catalog doesn't exist, try to create it
-                logger.info(
-                    "Catalog does not exist, creating it",
+                # Catalog doesn't exist - return error
+                logger.warning(
+                    "Catalog does not exist",
                     catalog=catalog_name,
                 )
-
-                try:
-                    # Create catalog
-                    w_client.catalogs.create(
-                        name=catalog_name,
-                        comment=f"Catalog created automatically for DLT pipeline",
-                    )
-                    logger.info(
-                        "Catalog created successfully",
-                        catalog=catalog_name,
-                    )
-
-                    # Grant ALL PRIVILEGES on catalog to service principal
-                    try:
-                        # Get SQL warehouses for executing GRANT statement
-                        warehouses = list(w_client.warehouses.list())
-                        if not warehouses:
-                            logger.warning(
-                                "No SQL warehouses available to grant privileges on catalog",
-                                catalog=catalog_name,
-                            )
-                            return {
-                                "success": True,
-                                "message": (
-                                    f"Catalog '{catalog_name}' created but privileges could not be granted "
-                                    f"(no SQL warehouse available). Please grant privileges manually."
-                                ),
-                                "created": True,
-                            }
-
-                        warehouse_id = warehouses[0].id
-                        service_principal_id = settings.client_id
-
-                        # Grant ALL PRIVILEGES to service principal
-                        grant_sql = f"GRANT ALL PRIVILEGES ON CATALOG {catalog_name} TO `{service_principal_id}`"
-
-                        logger.info(
-                            "Granting privileges on catalog",
-                            catalog=catalog_name,
-                            service_principal=service_principal_id,
-                            warehouse_id=warehouse_id,
-                        )
-
-                        w_client.statement_execution.execute_statement(
-                            warehouse_id=warehouse_id,
-                            statement=grant_sql,
-                        )
-
-                        logger.info(
-                            "Privileges granted successfully on catalog",
-                            catalog=catalog_name,
-                            service_principal=service_principal_id,
-                        )
-
-                        return {
-                            "success": True,
-                            "message": (
-                                f"Catalog '{catalog_name}' created successfully and privileges granted to "
-                                f"service principal '{service_principal_id}'"
-                            ),
-                            "created": True,
-                        }
-                    except Exception as grant_error:
-                        logger.warning(
-                            "Failed to grant privileges on catalog",
-                            catalog=catalog_name,
-                            error=str(grant_error),
-                        )
-                        return {
-                            "success": True,
-                            "message": (
-                                f"Catalog '{catalog_name}' created but privileges could not be granted: "
-                                f"{str(grant_error)}. Please grant privileges manually."
-                            ),
-                            "created": True,
-                        }
-
-                except Exception as create_error:
-                    logger.error(
-                        "Failed to create catalog",
-                        catalog=catalog_name,
-                        error=str(create_error),
-                    )
-                    return {
-                        "success": False,
-                        "message": f"Failed to create catalog '{catalog_name}': {str(create_error)}",
-                        "created": False,
-                    }
+                return {
+                    "success": False,
+                    "message": f"Catalog '{catalog_name}' not found. Create it first using: POST /catalogs/{catalog_name}",
+                    "exists": False,
+                }
             else:
                 # Different error (permissions, etc.)
                 logger.error(
@@ -286,7 +206,7 @@ def validate_and_prepare_catalog(
                 return {
                     "success": False,
                     "message": f"Error accessing catalog '{catalog_name}': {str(e)}",
-                    "created": False,
+                    "exists": False,
                 }
     except Exception as e:
         logger.error(
@@ -297,7 +217,7 @@ def validate_and_prepare_catalog(
         return {
             "success": False,
             "message": f"Unexpected error validating catalog: {str(e)}",
-            "created": False,
+            "exists": False,
         }
 
 
@@ -348,7 +268,7 @@ def validate_and_prepare_target_schema(
                     w_client.schemas.create(
                         name=target_schema_name,
                         catalog_name=target_catalog_name,
-                        comment=f"Schema created automatically for DLT pipeline",
+                        comment="Schema created automatically for DLT pipeline",
                     )
                     logger.info(
                         "Target schema created successfully",
@@ -468,75 +388,110 @@ def validate_and_prepare_source_table(
                 "cdf_was_enabled": True,
             }
         else:
-            # CDF not enabled, try to enable it
-            logger.info("Change Data Feed is not enabled, attempting to enable it", table=source_table)
+            # CDF not enabled - must enable it (mandatory for pipelines)
+            logger.info("Change Data Feed is not enabled, attempting to enable via SQL warehouse", table=source_table)
 
             try:
-                # Enable CDF using ALTER TABLE command via SQL execution
-                alter_sql = f"ALTER TABLE {source_table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
-
-                # Try to get a SQL warehouse for executing the ALTER TABLE command
-                try:
-                    warehouses = list(w_client.warehouses.list())
-                    if not warehouses:
-                        logger.warning(
-                            "No SQL warehouses available to enable CDF",
-                            table=source_table,
-                        )
-                        return {
-                            "success": False,
-                            "message": (
-                                f"Change Data Feed is not enabled on '{source_table}' and no SQL warehouse "
-                                f"is available to enable it. Please enable CDF manually or create a SQL warehouse."
-                            ),
-                            "cdf_enabled": False,
-                            "cdf_was_enabled": False,
-                        }
-
-                    # Use the first available SQL warehouse
-                    warehouse_id = warehouses[0].id
-                    logger.info(
-                        "Using SQL warehouse to enable CDF",
-                        table=source_table,
-                        warehouse_id=warehouse_id,
-                    )
-
-                    # Execute ALTER TABLE to enable CDF
-                    w_client.statement_execution.execute_statement(
-                        warehouse_id=warehouse_id,
-                        statement=alter_sql,
-                        catalog=catalog_name,
-                        schema=schema_name,
-                    )
-
-                    logger.info("Change Data Feed enabled successfully", table=source_table)
-                    return {
-                        "success": True,
-                        "message": f"Source table '{source_table}' exists and CDF has been enabled",
-                        "cdf_enabled": True,
-                        "cdf_was_enabled": False,
-                    }
-                except Exception as warehouse_error:
+                # Get SQL warehouses and prefer running ones
+                warehouses = list(w_client.warehouses.list())
+                if not warehouses:
                     logger.error(
-                        "Failed to enable Change Data Feed",
+                        "No SQL warehouses available for CDF enablement",
                         table=source_table,
-                        error=str(warehouse_error),
                     )
                     return {
                         "success": False,
-                        "message": f"Failed to enable Change Data Feed on '{source_table}': {str(warehouse_error)}",
+                        "message": (
+                            f"Change Data Feed must be enabled on '{source_table}' for CDC pipelines. "
+                            f"No SQL warehouse available to enable it. "
+                            f"Please either: (1) Create a SQL warehouse in your workspace, or "
+                            f"(2) Enable CDF manually: ALTER TABLE {source_table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
+                        ),
                         "cdf_enabled": False,
                         "cdf_was_enabled": False,
                     }
-            except Exception as alter_error:
-                logger.error(
-                    "Error in CDF enable process",
+
+                # Prefer running warehouses, then smallest stopped warehouse
+                running_warehouses = [w for w in warehouses if w.state and w.state.value == "RUNNING"]
+                selected_warehouse = None
+
+                if running_warehouses:
+                    selected_warehouse = running_warehouses[0]
+                    logger.info(
+                        "Using running SQL warehouse for CDF enablement",
+                        warehouse_id=selected_warehouse.id,
+                        warehouse_name=selected_warehouse.name if selected_warehouse.name else None,
+                        state="RUNNING",
+                        table=source_table,
+                    )
+                else:
+                    # No running warehouses - pick smallest one (by cluster_size) to auto-start
+                    # Sort by cluster_size (e.g., "2X-Small", "X-Small", "Small", etc.)
+                    size_order = {
+                        "2X-Small": 1,
+                        "X-Small": 2,
+                        "Small": 3,
+                        "Medium": 4,
+                        "Large": 5,
+                        "X-Large": 6,
+                        "2X-Large": 7,
+                        "3X-Large": 8,
+                        "4X-Large": 9,
+                    }
+                    sorted_warehouses = sorted(
+                        warehouses, key=lambda w: size_order.get(w.cluster_size, 99) if w.cluster_size else 99
+                    )
+                    selected_warehouse = sorted_warehouses[0]
+                    logger.info(
+                        "All SQL warehouses are stopped - will auto-start smallest warehouse for CDF enablement",
+                        warehouse_id=selected_warehouse.id,
+                        warehouse_name=selected_warehouse.name if selected_warehouse.name else None,
+                        warehouse_size=selected_warehouse.cluster_size if selected_warehouse.cluster_size else None,
+                        state=selected_warehouse.state.value if selected_warehouse.state else "UNKNOWN",
+                        table=source_table,
+                    )
+
+                warehouse_id = selected_warehouse.id
+
+                # Execute ALTER TABLE command to enable CDF
+                alter_sql = f"ALTER TABLE {source_table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
+
+                logger.info(
+                    "Executing ALTER TABLE to enable CDF",
                     table=source_table,
-                    error=str(alter_error),
+                    warehouse_id=warehouse_id,
+                )
+
+                w_client.statement_execution.execute_statement(
+                    warehouse_id=warehouse_id,
+                    statement=alter_sql,
+                    catalog=catalog_name,
+                    schema=schema_name,
+                )
+
+                logger.info("Change Data Feed enabled successfully via SQL warehouse", table=source_table)
+                return {
+                    "success": True,
+                    "message": f"Source table '{source_table}' exists and CDF has been enabled",
+                    "cdf_enabled": True,
+                    "cdf_was_enabled": False,
+                }
+
+            except Exception as enable_error:
+                # Failed to enable CDF - this is mandatory, so fail pipeline creation
+                error_msg = str(enable_error)
+                logger.error(
+                    "Failed to enable Change Data Feed via SQL warehouse",
+                    table=source_table,
+                    error=error_msg,
                 )
                 return {
                     "success": False,
-                    "message": f"Error enabling Change Data Feed on '{source_table}': {str(alter_error)}",
+                    "message": (
+                        f"Change Data Feed must be enabled on '{source_table}' for CDC pipelines. "
+                        f"Failed to enable automatically: {error_msg}. "
+                        f"Please enable it manually: ALTER TABLE {source_table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
+                    ),
                     "cdf_enabled": False,
                     "cdf_was_enabled": False,
                 }
@@ -738,7 +693,7 @@ def create_pipeline(
         logger.info(
             "Target catalog validation passed",
             pipeline_name=pipeline_name,
-            catalog_created=catalog_validation["created"],
+            catalog_exists=catalog_validation["exists"],
             message=catalog_validation["message"],
         )
 

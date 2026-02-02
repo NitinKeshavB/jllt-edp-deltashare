@@ -87,6 +87,31 @@ class GetPipelinesQueryParams(BaseModel):
         return v
 
 
+class CreateCatalogRequest(BaseModel):
+    """Request model for creating a Unity Catalog."""
+
+    comment: Optional[str] = Field(
+        default="Catalog created via Delta Share API",
+        description="Optional comment for the catalog",
+    )
+
+    external_location: Optional[str] = Field(
+        default=None,
+        description="Optional external location name for the catalog. "
+        "This should reference an existing external location created by administrators. "
+        "If not provided, Unity Catalog will use default storage if enabled.",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "comment": "My Delta Share catalog for team analytics",
+                "external_location": "my_external_location",
+            }
+        }
+    )
+
+
 class AddDataObjectsRequest(BaseModel):
     """Request model for adding data objects to a share."""
 

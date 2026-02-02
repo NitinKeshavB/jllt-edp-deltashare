@@ -18,6 +18,7 @@ from dbrx_api.errors import handle_databricks_errors
 from dbrx_api.errors import handle_pydantic_validation_errors
 from dbrx_api.monitoring.logger import configure_logger
 from dbrx_api.monitoring.request_context import RequestContextMiddleware
+from dbrx_api.routes.routes_catalog import ROUTER_CATALOG
 from dbrx_api.routes.routes_health import ROUTER_HEALTH
 from dbrx_api.routes.routes_metrics import ROUTER_DBRX_METRICS
 from dbrx_api.routes.routes_pipelines import ROUTER_DBRX_PIPELINES
@@ -219,6 +220,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Add request context middleware for tracking who/where requests come from
     app.add_middleware(RequestContextMiddleware)
     app.include_router(ROUTER_HEALTH)
+    app.include_router(ROUTER_CATALOG)
     app.include_router(ROUTER_RECIPIENT)
     app.include_router(ROUTER_SHARE)
     app.include_router(ROUTER_DBRX_PIPELINES)
