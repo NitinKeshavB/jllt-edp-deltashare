@@ -90,7 +90,7 @@ async def expire_and_insert_scd2(
 
     insert_sql = f"""
     INSERT INTO deltashare.{table} ({', '.join(columns)})
-    VALUES ({', '.join(placeholders[:len(values)])}, NOW(), 'infinity', true)
+    VALUES ({', '.join(placeholders[:len(values)])}, NOW(), '9999-12-31'::timestamp, true)
     RETURNING record_id
     """
 

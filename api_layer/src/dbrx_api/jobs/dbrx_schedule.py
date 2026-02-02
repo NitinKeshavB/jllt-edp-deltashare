@@ -338,6 +338,7 @@ def create_schedule_for_pipeline(
     paused: bool = False,
     email_notifications: Optional[List[str]] = None,
     tags: Optional[Dict[str, str]] = None,
+    description: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a scheduled job for a Databricks pipeline.
@@ -351,6 +352,7 @@ def create_schedule_for_pipeline(
         paused: Whether the schedule should be paused initially (default: False)
         email_notifications: List of email addresses for notifications
         tags: Dictionary of tags for the job
+        description: Optional description for the scheduled job
 
     Returns:
         Dictionary containing:
@@ -378,8 +380,14 @@ def create_schedule_for_pipeline(
                 on_success=email_notifications,
             )
 
+        print(f"DEBUG: Creating job/schedule {job_name}")
+        print(f"DEBUG: - Description being passed: '{description}'")
+        print(f"DEBUG: - Pipeline ID: {pipeline_id}")
+        print(f"DEBUG: - Cron: {cron_expression}")
+
         job = w_client.jobs.create(
             name=job_name,
+            description=description,
             tasks=[
                 Task(
                     task_key="run_pipeline",
@@ -395,6 +403,7 @@ def create_schedule_for_pipeline(
             email_notifications=job_email_notifications,
             tags=tags,
         )
+        print(f"DEBUG: Job created, job_id: {job.job_id}")
         return f"Schedule created successfully {job_name}"
     except Exception as e:
         return f"Error creating schedule for pipeline {pipeline_id}: {str(e)}"

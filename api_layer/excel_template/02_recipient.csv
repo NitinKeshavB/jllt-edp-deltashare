@@ -1,0 +1,4 @@
+name,type,recipient,recipient_databricks_org,recipient_ips,token_expiry,token_rotation,comment
+external_partner_recipient,D2O,partner@external-company.com,,203.0.113.0/24|198.51.100.50,90,false,External partner for Q1 sales analytics
+internal_analytics_team,D2D,analytics-team@jll.com,aws:us-west-2:a1b2c3d4-e5f6-7890-abcd-ef1234567890,,,false,Internal analytics team workspace
+compliance_auditor,D2O,auditor@compliance-firm.com,,192.0.2.0/24,30,true,External compliance auditor with token rotation

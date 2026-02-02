@@ -118,7 +118,11 @@ def create_share(
     w_client = WorkspaceClient(host=dltshr_workspace_url, token=session_token)
     try:
         # Create share
+        print(f"DEBUG: Creating share {share_name}")
+        print(f"DEBUG: - Description being passed: '{description}'")
+        print(f"DEBUG: - Storage root: {storage_root}")
         response = w_client.shares.create(name=share_name, comment=description, storage_root=storage_root)
+        print(f"DEBUG: Share created, comment in response: '{response.comment if hasattr(response, 'comment') else 'N/A'}'")
     except Exception as e:
         err_msg = str(e)
 

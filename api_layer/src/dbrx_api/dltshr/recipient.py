@@ -152,9 +152,14 @@ def create_recipient_d2o(
     if ip_access_list:
         # Strip whitespace from each IP address
         cleaned_ips = [ip.strip() for ip in ip_access_list if ip.strip()]
+        print(f"DEBUG: Received ip_access_list for {recipient_name}: {ip_access_list}")
+        print(f"DEBUG: Cleaned IPs: {cleaned_ips}")
 
         if cleaned_ips:
             ip_access = IpAccessList(allowed_ip_addresses=cleaned_ips)
+            print(f"DEBUG: Created IpAccessList object with {len(cleaned_ips)} IPs")
+    else:
+        print(f"DEBUG: No ip_access_list provided for {recipient_name}")
 
     try:
         # Get authentication token
@@ -164,17 +169,26 @@ def create_recipient_d2o(
         w_client = WorkspaceClient(host=dltshr_workspace_url, token=session_token)
 
         # Create TOKEN recipient with optional IP access list
+        print(f"DEBUG: Creating recipient {recipient_name}")
+        print(f"DEBUG: - Description being passed: '{description}'")
+        print(f"DEBUG: - IP access: {'None' if ip_access is None else f'{len(ip_access.allowed_ip_addresses)} IPs'}")
         response = w_client.recipients.create(
             name=recipient_name,
             comment=description,
             authentication_type=AuthenticationType.TOKEN,
             ip_access_list=ip_access,
         )
+        print(f"DEBUG: Recipient created, comment in response: '{response.comment if hasattr(response, 'comment') else 'N/A'}'")
 
         return response
     except Exception as ex:
-        print(f"✗ Unexpected error creating recipient: {ex}")
-        raise
+        err_msg = str(ex)
+        if "There is already a Recipient object" in err_msg or "already exists" in err_msg.lower():
+            print(f"✗ Recipient '{recipient_name}' already exists.")
+            return f"Recipient '{recipient_name}' already exists"
+        else:
+            print(f"✗ Unexpected error creating recipient: {ex}")
+            raise
 
 
 def rotate_recipient_token(

@@ -5,6 +5,7 @@ Pydantic models matching the canonical YAML structure from WORKFLOW_MVP_PLAN.md 
 These models are used for both YAML and Excel parsing.
 """
 
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -146,7 +147,6 @@ class DeltaShareConfig(BaseModel):
 
     ext_catalog_name: str  # Target catalog name
     ext_schema_name: str  # Target schema name
-    prefix_assetname: str = ""  # Prefix for target table names
     tags: List[str] = Field(default_factory=list)  # Tags for target tables
 
     @field_validator("ext_catalog_name", "ext_schema_name")
@@ -178,12 +178,16 @@ class PipelineConfig(BaseModel):
     """Pipeline configuration for a share."""
 
     name_prefix: str  # Pipeline name = {prefix}_{asset_name}
-    schedule: Dict[str, Union[CronSchedule, str]]  # Per-asset schedule (cron or "continuous")
+    source_asset: Optional[str] = None  # Which share_asset this pipeline processes (catalog.schema.table) - OPTIONAL for v1.0 compatibility
+    target_asset: Optional[str] = None  # Target table name for the pipeline (catalog.schema.table) - used as pipelines.target_table
+    schedule: Union[CronSchedule, str, Dict[str, Any]]  # Cron schedule, "continuous", or old v1.0 dict format
     notification: List[str] = Field(default_factory=list)  # Email/AD group list
     tags: Dict[str, str] = Field(default_factory=dict)  # Key-value tags
     serverless: bool = False  # Use serverless compute
     scd_type: str = "2"  # "1", "2", or "full_refresh"
     key_columns: str = ""  # Comma-separated (required for SCD2)
+    ext_catalog_name: Optional[str] = None  # Override target catalog (falls back to delta_share config)
+    ext_schema_name: Optional[str] = None  # Override target schema (falls back to delta_share config)
 
     @field_validator("name_prefix")
     @classmethod
@@ -203,28 +207,84 @@ class PipelineConfig(BaseModel):
 
     @field_validator("schedule")
     @classmethod
-    def validate_schedule(cls, v: Dict[str, Union[CronSchedule, str]]) -> Dict[str, Union[CronSchedule, str]]:
-        """Validate schedule format."""
-        if not v:
-            raise ValueError("schedule cannot be empty")
-
-        for asset_name, schedule_config in v.items():
-            if isinstance(schedule_config, str):
-                # Must be "continuous"
-                if schedule_config.lower() != "continuous":
-                    raise ValueError(
-                        f"String schedule for '{asset_name}' must be 'continuous', got: {schedule_config}"
-                    )
-            elif not isinstance(schedule_config, (CronSchedule, dict)):
-                raise ValueError(f"Schedule for '{asset_name}' must be CronSchedule or 'continuous'")
-
+    def validate_schedule(cls, v: Union[CronSchedule, str, Dict[str, Any]]) -> Union[CronSchedule, str, Dict[str, Any]]:
+        """Validate schedule format - supports v1.0 (dict) and v2.0 (CronSchedule/str) formats."""
+        if isinstance(v, str):
+            # Must be "continuous"
+            if v.lower() != "continuous":
+                raise ValueError(f"String schedule must be 'continuous', got: {v}")
+        elif isinstance(v, dict):
+            # v1.0 format: {asset_name: {cron: "...", timezone: "..."}} or {asset_name: "continuous"}
+            # OR v2.0 format: {cron: "...", timezone: "..."}
+            # Accept both for backwards compatibility
+            pass
+        elif not isinstance(v, CronSchedule):
+            raise ValueError("Schedule must be CronSchedule object, dict, or 'continuous'")
         return v
 
+    @field_validator("source_asset")
+    @classmethod
+    def validate_source_asset(cls, v: Optional[str]) -> Optional[str]:
+        """Validate source_asset is not empty if provided."""
+        if v is not None and (not v or not v.strip()):
+            raise ValueError("source_asset cannot be empty string")
+        return v.strip() if v else None
+
     @model_validator(mode="after")
-    def validate_key_columns_for_scd2(self):
-        """SCD Type 2 requires key_columns."""
+    def migrate_v1_to_v2_and_validate(self):
+        """
+        Backwards compatibility: Extract source_asset from v1.0 schedule format if missing.
+
+        v1.0 format: schedule = {asset_name: {cron: "...", timezone: "..."}}
+        v2.0 format: source_asset = "catalog.schema.table", schedule = {cron: "...", timezone: "..."}
+        """
+        # If source_asset is missing, try to extract from old v1.0 schedule format
+        if self.source_asset is None:
+            if isinstance(self.schedule, dict):
+                # Check if this is v1.0 format: schedule has asset name as key
+                schedule_keys = list(self.schedule.keys())
+
+                # v1.0 format: exactly one key that looks like an asset name (contains dots or is a table name)
+                # v2.0 format: keys are "cron" and "timezone"
+                if len(schedule_keys) == 1 and schedule_keys[0] not in ["cron", "timezone"]:
+                    # v1.0 format detected
+                    asset_name = schedule_keys[0]
+                    schedule_value = self.schedule[asset_name]
+
+                    self.source_asset = asset_name
+
+                    # Migrate schedule to v2.0 format
+                    if isinstance(schedule_value, str):
+                        # {asset_name: "continuous"}
+                        self.schedule = schedule_value
+                    elif isinstance(schedule_value, dict):
+                        # {asset_name: {cron: "...", timezone: "..."}}
+                        self.schedule = schedule_value
+
+                    from loguru import logger
+                    logger.warning(
+                        f"[MIGRATION] Pipeline '{self.name_prefix}': Migrated v1.0 schedule format. "
+                        f"Extracted source_asset='{self.source_asset}' from schedule. "
+                        f"Please update to v2.0 format (explicit source_asset field)."
+                    )
+                elif "cron" in schedule_keys or "timezone" in schedule_keys:
+                    # v2.0 format but source_asset is missing
+                    raise ValueError(
+                        f"Pipeline '{self.name_prefix}': v2.0 format detected but source_asset is missing. "
+                        f"Please add explicit source_asset field."
+                    )
+
+        # Validate that source_asset is now set
+        if self.source_asset is None:
+            raise ValueError(
+                f"Pipeline '{self.name_prefix}': source_asset is required. "
+                f"Use v2.0 format with explicit source_asset field."
+            )
+
+        # Validate key_columns for SCD2
         if self.scd_type == "2" and not self.key_columns:
             raise ValueError("key_columns required for scd_type='2'")
+
         return self
 
 

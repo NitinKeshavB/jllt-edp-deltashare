@@ -19,26 +19,39 @@ metadata:
   contact_email: test.user@jll.com
 
 recipient:
+  # Example 1: Declarative IP management (specify complete desired state)
   - name: test-recipient-d2o
     type: D2O
     recipient: test-recipient@example.com  # Contact email (required)
-    recipient_ips:  # IP allowlist for D2O recipients
+    description: "Test D2O recipient for validation"  # Recipient description (supports both 'description' and 'comment')
+    recipient_ips:  # APPROACH 1: Declarative - complete list of IPs that should exist
       - 192.168.1.0/24
       - 10.0.0.50
     token_expiry: 30  # Days
     token_rotation: false
-    comment: "Test D2O recipient for validation"
+
+  # Example 2: Explicit IP management (specify only changes - easier for incremental updates)
+  # - name: test-recipient-d2o-explicit
+  #   type: D2O
+  #   recipient: test-explicit@example.com
+  #   description: "Recipient using explicit IP management"
+  #   recipient_ips_to_add:      # APPROACH 2a: Explicit - add these IPs only
+  #     - 10.0.0.100
+  #     - 172.16.0.0/16
+  #   recipient_ips_to_remove:   # APPROACH 2b: Explicit - remove these IPs only
+  #     - 192.168.2.0/24
+  #   # Note: You can use recipient_ips_to_add alone, recipient_ips_to_remove alone, or both together
 
   - name: test-recipient-d2d
     type: D2D
     recipient: d2d-recipient@example.com  # Contact email (required)
     recipient_databricks_org: "aws:us-west-2:abc-123-def-456"  # Databricks metastore ID (required for D2D)
-    comment: "Test D2D recipient for validation"
+    description: "Test D2D recipient for validation"  # Recipient description (supports both 'description' and 'comment')
 
 share:
   # Share 1: Individual table/view assets with one pipeline per asset
   - name: test_share_q1
-    comment: "Q1 test data share - individual table assets"
+    description: "Q1 test data share - individual table assets"  # Share description (supports both 'description' and 'comment')
     recipients:
       - test-recipient-d2o
       - test-recipient-d2d
@@ -63,6 +76,8 @@ share:
     pipelines:
       # Pipeline 1: sales_data
       - name_prefix: q1_sync_pipeline_sales
+        source_asset: catalog.schema.sales_data  # Which share_asset this pipeline processes
+        description: "Daily sync pipeline for sales data with SCD Type 2 tracking"  # Pipeline/schedule description
         scd_type: "2"
         key_columns: "sale_id,timestamp"
         serverless: false
@@ -71,14 +86,14 @@ share:
         tags:
           environment: production
           dataset: sales
-
         schedule:
-          catalog.schema.sales_data:
-            cron: "0 0 2 * * ?"  # Daily at 2 AM
-            timezone: "America/New_York"
+          cron: "0 0 2 * * ?"  # Daily at 2 AM
+          timezone: "America/New_York"
 
       # Pipeline 2: customer_data
       - name_prefix: q1_sync_pipeline_customer
+        source_asset: catalog.schema.customer_data  # Which share_asset this pipeline processes
+        description: "Customer data sync pipeline - runs every 6 hours"  # Pipeline/schedule description
         scd_type: "2"
         key_columns: "customer_id,updated_at"
         serverless: false
@@ -87,32 +102,33 @@ share:
         tags:
           environment: production
           dataset: customer
-
         schedule:
-          catalog.schema.customer_data:
-            cron: "0 0 */6 * * ?"  # Every 6 hours
-            timezone: "UTC"
+          cron: "0 0 */6 * * ?"  # Every 6 hours
+          timezone: "UTC"
 
       # Pipeline 3: product_view
+      # Optional: Override target catalog/schema for this specific pipeline
+      # If not specified, uses delta_share ext_catalog_name and ext_schema_name
       - name_prefix: q1_sync_pipeline_product
+        source_asset: catalog.schema.product_view  # Which share_asset this pipeline processes
         scd_type: "1"
         key_columns: ""
         serverless: true
+        # ext_catalog_name: custom_catalog  # Optional: Override target catalog
+        # ext_schema_name: custom_schema    # Optional: Override target schema
         notification:
           - analytics-team@jll.com
         tags:
           environment: production
           dataset: product
-
         schedule:
-          catalog.schema.product_view:
-            cron: "0 0 * * * ?"  # Hourly
-            timezone: "UTC"
+          cron: "0 0 * * * ?"  # Hourly
+          timezone: "UTC"
 
   # Share 2: Schema-level sharing with multiple pipelines
   # When sharing a schema, list all tables explicitly and create pipelines with _1, _2 suffixes
   - name: test_audit_share
-    comment: "Audit schema share - all tables in schema with individual pipelines"
+    description: "Audit schema share - all tables in schema with individual pipelines"  # Share description
     recipients:
       - test-recipient-d2o
 
