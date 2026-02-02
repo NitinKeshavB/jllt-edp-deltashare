@@ -129,14 +129,22 @@ def _parse_recipients_sheet(wb) -> list:
             header_clean = header.strip().lower().replace(" ", "_")
 
             # Handle recipient_ips (comma-separated string → list)
-            if header_clean == "recipient_ips" and value:
-                if isinstance(value, str):
+            if header_clean == "recipient_ips":
+                if value and isinstance(value, str) and value.strip():
                     recipient_dict[header_clean] = [ip.strip() for ip in value.split(",") if ip.strip()]
                 else:
                     recipient_dict[header_clean] = []
-            # Handle token_rotation (string → boolean)
+            # Handle token_expiry (integer, default 30 for D2O, not used for D2D)
+            elif header_clean == "token_expiry":
+                if value is not None and value != "":
+                    recipient_dict[header_clean] = int(value)
+                else:
+                    recipient_dict[header_clean] = 30  # Default value
+            # Handle token_rotation (boolean, default False for D2O, not used for D2D)
             elif header_clean == "token_rotation":
-                if isinstance(value, str):
+                if value is None or value == "":
+                    recipient_dict[header_clean] = False  # Default value
+                elif isinstance(value, str):
                     recipient_dict[header_clean] = value.lower() in ("true", "yes", "1")
                 else:
                     recipient_dict[header_clean] = bool(value)

@@ -1,37 +1,181 @@
 metadata:
+  # Project Information
   requestor: test.user@jll.com
   project_name: "Test Project - Q1 2024"
   business_line: "Test Business Line"
-  strategy: NEW
+  strategy: NEW  # NEW or UPDATE
   description: "Test share pack for workflow validation"
+
+  # Required governance fields
+  delta_share_region: AM  # AM or EMEA
+  configurator: data-platform-team@jll.com
+  approver: analytics-leadership@jll.com
+  executive_team: data-governance-team@jll.com
+  approver_status: approved  # approved | declined | request_more_info | pending
+  workspace_url: "https://adb-1234567890123456.12.azuredatabricks.net"  # Databricks workspace URL for provisioning
+
+  # Optional metadata
+  version: "1.0"
+  contact_email: test.user@jll.com
 
 recipient:
   - name: test-recipient-d2o
     type: D2O
-    email: test@example.com
-    allowed_ips:
+    recipient: test-recipient@example.com  # Contact email (required)
+    recipient_ips:  # IP allowlist for D2O recipients
       - 192.168.1.0/24
       - 10.0.0.50
+    token_expiry: 30  # Days
+    token_rotation: false
     comment: "Test D2O recipient for validation"
 
   - name: test-recipient-d2d
     type: D2D
-    metastore_id: "aws:us-west-2:abc-123-def-456"
+    recipient: d2d-recipient@example.com  # Contact email (required)
+    recipient_databricks_org: "aws:us-west-2:abc-123-def-456"  # Databricks metastore ID (required for D2D)
     comment: "Test D2D recipient for validation"
 
 share:
+  # Share 1: Individual table/view assets with one pipeline per asset
   - name: test_share_q1
-    comment: "Q1 test data share"
+    comment: "Q1 test data share - individual table assets"
     recipients:
       - test-recipient-d2o
       - test-recipient-d2d
-    data_objects:
-      - catalog.schema.test_table_1
-      - catalog.schema.test_table_2
 
+    # Share assets - only 3-part names (catalog.schema.table)
+    # Each asset MUST have a corresponding pipeline
+    share_assets:
+      - catalog.schema.sales_data
+      - catalog.schema.customer_data
+      - catalog.schema.product_view
+
+    # Target workspace configuration for DLT pipelines
+    delta_share:
+      ext_catalog_name: target_catalog
+      ext_schema_name: target_schema
+      prefix_assetname: "prod_"
+      tags:
+        - production
+        - q1_analytics
+
+    # IMPORTANT: One pipeline per asset - every asset in share_assets must have a pipeline
+    pipelines:
+      # Pipeline 1: sales_data
+      - name_prefix: q1_sync_pipeline_sales
+        scd_type: "2"
+        key_columns: "sale_id,timestamp"
+        serverless: false
+        notification:
+          - analytics-team@jll.com
+        tags:
+          environment: production
+          dataset: sales
+
+        schedule:
+          catalog.schema.sales_data:
+            cron: "0 0 2 * * ?"  # Daily at 2 AM
+            timezone: "America/New_York"
+
+      # Pipeline 2: customer_data
+      - name_prefix: q1_sync_pipeline_customer
+        scd_type: "2"
+        key_columns: "customer_id,updated_at"
+        serverless: false
+        notification:
+          - analytics-team@jll.com
+        tags:
+          environment: production
+          dataset: customer
+
+        schedule:
+          catalog.schema.customer_data:
+            cron: "0 0 */6 * * ?"  # Every 6 hours
+            timezone: "UTC"
+
+      # Pipeline 3: product_view
+      - name_prefix: q1_sync_pipeline_product
+        scd_type: "1"
+        key_columns: ""
+        serverless: true
+        notification:
+          - analytics-team@jll.com
+        tags:
+          environment: production
+          dataset: product
+
+        schedule:
+          catalog.schema.product_view:
+            cron: "0 0 * * * ?"  # Hourly
+            timezone: "UTC"
+
+  # Share 2: Schema-level sharing with multiple pipelines
+  # When sharing a schema, list all tables explicitly and create pipelines with _1, _2 suffixes
   - name: test_audit_share
-    comment: "Test audit logs"
+    comment: "Audit schema share - all tables in schema with individual pipelines"
     recipients:
       - test-recipient-d2o
-    data_objects:
+
+    # Share assets: All tables from catalog.audit_schema
+    # Listed explicitly as 3-part names (catalog.schema.table)
+    share_assets:
       - catalog.audit_schema.activity_log
+      - catalog.audit_schema.error_log
+      - catalog.audit_schema.access_log
+
+    # Target workspace for audit data
+    delta_share:
+      ext_catalog_name: audit_target_catalog
+      ext_schema_name: audit_target_schema
+      prefix_assetname: "rt_"
+      tags:
+        - production
+        - compliance
+
+    # Schema-level sharing: One pipeline per table with naming suffix _1, _2, _3
+    pipelines:
+      # Pipeline 1: activity_log (continuous)
+      - name_prefix: audit_sync_pipeline_1
+        scd_type: "1"
+        key_columns: ""
+        serverless: true
+        notification:
+          - audit-team@jll.com
+        tags:
+          environment: production
+          table: activity_log
+
+        schedule:
+          catalog.audit_schema.activity_log: "continuous"  # Real-time
+
+      # Pipeline 2: error_log (every 15 minutes)
+      - name_prefix: audit_sync_pipeline_2
+        scd_type: "1"
+        key_columns: ""
+        serverless: true
+        notification:
+          - audit-team@jll.com
+        tags:
+          environment: production
+          table: error_log
+
+        schedule:
+          catalog.audit_schema.error_log:
+            cron: "0 */15 * * * ?"  # Every 15 minutes
+            timezone: "UTC"
+
+      # Pipeline 3: access_log (hourly)
+      - name_prefix: audit_sync_pipeline_3
+        scd_type: "1"
+        key_columns: ""
+        serverless: true
+        notification:
+          - audit-team@jll.com
+        tags:
+          environment: production
+          table: access_log
+
+        schedule:
+          catalog.audit_schema.access_log:
+            cron: "0 0 * * * ?"  # Every hour
+            timezone: "UTC"

@@ -84,13 +84,13 @@ async def expire_and_insert_scd2(
             new_version,
             created_by,
             change_reason,
+            # effective_from, effective_to, is_current values added to placeholders
         ]
     )
-    # Note: effective_from, effective_to, is_current use database defaults via keyword
 
     insert_sql = f"""
     INSERT INTO deltashare.{table} ({', '.join(columns)})
-    VALUES ({', '.join(placeholders)}, NOW(), 'infinity', true)
+    VALUES ({', '.join(placeholders[:len(values)])}, NOW(), 'infinity', true)
     RETURNING record_id
     """
 

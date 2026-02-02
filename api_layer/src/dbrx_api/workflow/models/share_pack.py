@@ -35,6 +35,15 @@ class SharePackMetadata(BaseModel):
     approver_status: str = "approved"  # approved | declined | request_more_info
     requestor: str  # Email of person submitting
     strategy: str = "NEW"  # NEW or UPDATE
+    workspace_url: str  # Databricks workspace URL for provisioning (required)
+
+    @field_validator("workspace_url")
+    @classmethod
+    def validate_workspace_url(cls, v: str) -> str:
+        """Validate workspace URL is HTTPS."""
+        if not v.startswith("https://"):
+            raise ValueError("workspace_url must be a valid HTTPS URL")
+        return v.strip().rstrip("/")
 
     @field_validator("delta_share_region")
     @classmethod
