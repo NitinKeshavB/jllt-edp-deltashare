@@ -18,7 +18,7 @@
 		},
 		{
 			"key": "subscription_key",
-			"value": "your-subscription-key-here",
+			"value": "",
 			"type": "string"
 		},
 		{
@@ -37,12 +37,14 @@
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text",
-						"description": "Databricks workspace URL"
+						"description": "Databricks workspace URL (required)"
 					},
 					{
 						"key": "Ocp-Apim-Subscription-Key",
 						"value": "{{subscription_key}}",
-						"type": "text"
+						"type": "text",
+						"description": "Only required when accessing via Azure API Management (not for local testing)",
+						"disabled": true
 					},
 					{
 						"key": "Content-Type",
@@ -77,7 +79,9 @@
 					{
 						"key": "Ocp-Apim-Subscription-Key",
 						"value": "{{subscription_key}}",
-						"type": "text"
+						"type": "text",
+						"description": "Only required when accessing via Azure API Management (not for local testing)",
+						"disabled": true
 					}
 				],
 				"url": {
@@ -103,7 +107,9 @@
 					{
 						"key": "Ocp-Apim-Subscription-Key",
 						"value": "{{subscription_key}}",
-						"type": "text"
+						"type": "text",
+						"description": "Only required when accessing via Azure API Management (not for local testing)",
+						"disabled": true
 					}
 				],
 				"url": {

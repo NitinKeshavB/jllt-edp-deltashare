@@ -71,7 +71,11 @@ def create_catalog(
             }
         except Exception as e:
             error_msg = str(e).lower()
-            if "does not exist" not in error_msg and "not found" not in error_msg and "catalog_not_found" not in error_msg:
+            if (
+                "does not exist" not in error_msg
+                and "not found" not in error_msg
+                and "catalog_not_found" not in error_msg
+            ):
                 # Different error (permissions, etc.)
                 logger.error(
                     "Error checking catalog",

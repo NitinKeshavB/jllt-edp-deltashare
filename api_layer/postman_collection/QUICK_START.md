@@ -60,13 +60,13 @@ Expected response:
 
 2. Create recipient
    POST /recipients/d2o/external_partner
-   
+
 3. Create share
    POST /shares/analytics_share
-   
+
 4. Add data to share
    PUT /shares/analytics_share/dataobject/add
-   
+
 5. Grant access to recipient
    PUT /shares/analytics_share/recipients/add
 ```
@@ -75,13 +75,13 @@ Expected response:
 ```
 1. Create pipeline
    POST /pipelines/daily_sync
-   
+
 2. Add notifications
    PUT /pipelines/daily_sync/notifications/add
-   
+
 3. Create schedule
    POST /pipelines/daily_sync/schedules
-   
+
 4. Monitor with metrics
    GET /pipelines/daily_sync/metrics
 ```
@@ -90,13 +90,13 @@ Expected response:
 ```
 1. Create D2O recipient
    POST /recipients/d2o/partner_name
-   
+
 2. Add IP restrictions
    PUT /recipients/partner_name/ipaddress/add
-   
+
 3. Set expiration
    PUT /recipients/partner_name/expiration_time/update
-   
+
 4. Rotate token (when needed)
    PUT /recipients/partner_name/tokens/rotate
 ```
