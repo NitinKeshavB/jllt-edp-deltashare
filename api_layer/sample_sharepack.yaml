@@ -1,10 +1,10 @@
 metadata:
   # Project Information
   requestor: test.user@jll.com
-  project_name: "Test Project - Q1 2024"
-  business_line: "Test Business Line"
+  project_name: "SharePack Demo - Q1 2024"
+  business_line: "Data Platform Engineering"
   strategy: NEW  # NEW or UPDATE
-  description: "Test share pack for workflow validation"
+  description: "Demo SharePack showcasing all features: explicit source assets, pipeline overrides, timezone support"
 
   # Required governance fields
   delta_share_region: AM  # AM or EMEA
@@ -13,185 +13,258 @@ metadata:
   executive_team: data-governance-team@jll.com
   approver_status: approved  # approved | declined | request_more_info | pending
   workspace_url: "https://adb-1234567890123456.12.azuredatabricks.net"  # Databricks workspace URL for provisioning
+  servicenow: "INC0012345"  # ServiceNow ticket number or link (required)
 
   # Optional metadata
   version: "1.0"
   contact_email: test.user@jll.com
 
 recipient:
-  # Example 1: Declarative IP management (specify complete desired state)
-  - name: test-recipient-d2o
+  # D2O Recipient - Open sharing with TOKEN authentication
+  - name: external_partner_recipient
     type: D2O
-    recipient: test-recipient@example.com  # Contact email (required)
-    description: "Test D2O recipient for validation"  # Recipient description (supports both 'description' and 'comment')
-    recipient_ips:  # APPROACH 1: Declarative - complete list of IPs that should exist
-      - 192.168.1.0/24
-      - 10.0.0.50
-    token_expiry: 30  # Days
+    recipient: partner@external-company.com  # Contact email (required)
+    recipient_ips_to_add:  # IP allowlist for D2O recipients (explicit approach for NEW strategy)
+      - 203.0.113.0/24
+      - 198.51.100.50
+    token_expiry: 90  # Days
     token_rotation: false
+    comment: "External partner for Q1 sales analytics"
 
-  # Example 2: Explicit IP management (specify only changes - easier for incremental updates)
-  # - name: test-recipient-d2o-explicit
-  #   type: D2O
-  #   recipient: test-explicit@example.com
-  #   description: "Recipient using explicit IP management"
-  #   recipient_ips_to_add:      # APPROACH 2a: Explicit - add these IPs only
-  #     - 10.0.0.100
-  #     - 172.16.0.0/16
-  #   recipient_ips_to_remove:   # APPROACH 2b: Explicit - remove these IPs only
-  #     - 192.168.2.0/24
-  #   # Note: You can use recipient_ips_to_add alone, recipient_ips_to_remove alone, or both together
-
-  - name: test-recipient-d2d
+  # D2D Recipient - Databricks-to-Databricks with DATABRICKS authentication
+  - name: internal_analytics_team
     type: D2D
-    recipient: d2d-recipient@example.com  # Contact email (required)
-    recipient_databricks_org: "aws:us-west-2:abc-123-def-456"  # Databricks metastore ID (required for D2D)
-    description: "Test D2D recipient for validation"  # Recipient description (supports both 'description' and 'comment')
+    recipient: analytics-team@jll.com  # Contact email (required)
+    recipient_databricks_org: "aws:us-west-2:a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # Databricks metastore ID (required for D2D)
+    comment: "Internal analytics team workspace"
 
 share:
-  # Share 1: Individual table/view assets with one pipeline per asset
-  - name: test_share_q1
-    description: "Q1 test data share - individual table assets"  # Share description (supports both 'description' and 'comment')
+  # ========================================
+  # Share 1: Sales Analytics - Individual Tables
+  # ========================================
+  - name: sales_analytics_share
+    comment: "Q1 sales analytics data - individual table assets with explicit source assets"
     recipients:
-      - test-recipient-d2o
-      - test-recipient-d2d
+      - external_partner_recipient
+      - internal_analytics_team
 
-    # Share assets - only 3-part names (catalog.schema.table)
-    # Each asset MUST have a corresponding pipeline
+    # Share assets - 3-part names (catalog.schema.table)
+    # Each asset will have a corresponding pipeline
     share_assets:
-      - catalog.schema.sales_data
-      - catalog.schema.customer_data
-      - catalog.schema.product_view
+      - main_catalog.sales_schema.daily_sales
+      - main_catalog.sales_schema.customer_orders
+      - main_catalog.sales_schema.revenue_summary
 
-    # Target workspace configuration for DLT pipelines
+    # Default target workspace configuration for DLT pipelines
     delta_share:
-      ext_catalog_name: target_catalog
-      ext_schema_name: target_schema
-      prefix_assetname: "prod_"
+      ext_catalog_name: analytics_prod
+      ext_schema_name: shared_sales
       tags:
         - production
-        - q1_analytics
+        - sales_analytics
 
-    # IMPORTANT: One pipeline per asset - every asset in share_assets must have a pipeline
+    # One pipeline per asset - explicit source_asset and target_asset fields
     pipelines:
-      # Pipeline 1: sales_data
-      - name_prefix: q1_sync_pipeline_sales
-        source_asset: catalog.schema.sales_data  # Which share_asset this pipeline processes
-        description: "Daily sync pipeline for sales data with SCD Type 2 tracking"  # Pipeline/schedule description
+      # Pipeline 1: Daily Sales (runs at 2 AM EST daily)
+      - name_prefix: sales_daily_sync
+        source_asset: main_catalog.sales_schema.daily_sales  # EXPLICIT: which asset this processes
+        target_asset: prod_daily_sales  # EXPLICIT: target table name in ext_catalog_name.ext_schema_name
         scd_type: "2"
-        key_columns: "sale_id,timestamp"
+        key_columns: "sale_id,sale_date"
         serverless: false
         notification:
           - analytics-team@jll.com
+          - sales-ops@jll.com
         tags:
           environment: production
-          dataset: sales
+          dataset: daily_sales
+          owner: sales_team
         schedule:
-          cron: "0 0 2 * * ?"  # Daily at 2 AM
+          cron: "0 0 2 * * ?"  # Daily at 2:00 AM
           timezone: "America/New_York"
 
-      # Pipeline 2: customer_data
-      - name_prefix: q1_sync_pipeline_customer
-        source_asset: catalog.schema.customer_data  # Which share_asset this pipeline processes
-        description: "Customer data sync pipeline - runs every 6 hours"  # Pipeline/schedule description
+      # Pipeline 2: Customer Orders (runs every 6 hours)
+      - name_prefix: sales_orders_sync
+        source_asset: main_catalog.sales_schema.customer_orders  # EXPLICIT: which asset this processes
+        target_asset: prod_customer_orders  # EXPLICIT: target table name
         scd_type: "2"
-        key_columns: "customer_id,updated_at"
-        serverless: false
+        key_columns: "order_id,customer_id,created_at"
+        serverless: true
         notification:
           - analytics-team@jll.com
         tags:
           environment: production
-          dataset: customer
+          dataset: customer_orders
+          owner: sales_team
         schedule:
           cron: "0 0 */6 * * ?"  # Every 6 hours
           timezone: "UTC"
 
-      # Pipeline 3: product_view
-      # Optional: Override target catalog/schema for this specific pipeline
-      # If not specified, uses delta_share ext_catalog_name and ext_schema_name
-      - name_prefix: q1_sync_pipeline_product
-        source_asset: catalog.schema.product_view  # Which share_asset this pipeline processes
+      # Pipeline 3: Revenue Summary (hourly, with CUSTOM target catalog/schema)
+      # Demonstrates pipeline-level catalog/schema override and target_asset
+      - name_prefix: revenue_summary_sync
+        source_asset: main_catalog.sales_schema.revenue_summary  # EXPLICIT: which asset this processes
+        target_asset: revenue_summary_daily  # EXPLICIT: target table name
+        scd_type: "1"  # SCD Type 1 - overwrite
+        key_columns: ""
+        serverless: true
+        # OVERRIDE: Use different target catalog/schema for this pipeline
+        ext_catalog_name: finance_catalog  # Overrides delta_share.ext_catalog_name
+        ext_schema_name: revenue_reports   # Overrides delta_share.ext_schema_name
+        notification:
+          - finance-team@jll.com
+          - analytics-team@jll.com
+        tags:
+          environment: production
+          dataset: revenue
+          owner: finance_team
+        schedule:
+          cron: "0 0 * * * ?"  # Every hour
+          timezone: "America/New_York"
+
+  # ========================================
+  # Share 2: Real-time Operational Data
+  # ========================================
+  - name: operations_realtime_share
+    comment: "Real-time operational metrics with continuous and mixed schedule patterns"
+    recipients:
+      - internal_analytics_team
+
+    # Share assets - operational tables
+    share_assets:
+      - operations_catalog.metrics_schema.system_health
+      - operations_catalog.metrics_schema.error_logs
+      - operations_catalog.metrics_schema.user_activity
+
+    # Target workspace for operational data
+    delta_share:
+      ext_catalog_name: ops_analytics
+      ext_schema_name: realtime_metrics
+      tags:
+        - production
+        - operations
+        - monitoring
+
+    pipelines:
+      # Pipeline 1: System Health (continuous streaming)
+      - name_prefix: ops_health_stream
+        source_asset: operations_catalog.metrics_schema.system_health
+        target_asset: rt_system_health  # Target table name
         scd_type: "1"
         key_columns: ""
         serverless: true
-        # ext_catalog_name: custom_catalog  # Optional: Override target catalog
-        # ext_schema_name: custom_schema    # Optional: Override target schema
+        notification:
+          - ops-team@jll.com
+        tags:
+          environment: production
+          table: system_health
+          streaming: "true"
+        schedule: "continuous"  # Real-time streaming
+
+      # Pipeline 2: Error Logs (every 15 minutes)
+      - name_prefix: ops_errors_sync
+        source_asset: operations_catalog.metrics_schema.error_logs
+        target_asset: rt_error_logs  # Target table name
+        scd_type: "1"
+        key_columns: ""
+        serverless: true
+        notification:
+          - ops-team@jll.com
+          - sre-team@jll.com
+        tags:
+          environment: production
+          table: error_logs
+        schedule:
+          cron: "0 */15 * * * ?"  # Every 15 minutes
+          timezone: "UTC"
+
+      # Pipeline 3: User Activity (every 30 minutes during business hours)
+      - name_prefix: ops_activity_sync
+        source_asset: operations_catalog.metrics_schema.user_activity
+        target_asset: rt_user_activity  # Target table name
+        scd_type: "2"
+        key_columns: "user_id,activity_timestamp"
+        serverless: true
         notification:
           - analytics-team@jll.com
         tags:
           environment: production
-          dataset: product
+          table: user_activity
         schedule:
-          cron: "0 0 * * * ?"  # Hourly
-          timezone: "UTC"
+          cron: "0 */30 * * * ?"  # Every 30 minutes
+          timezone: "America/Los_Angeles"
 
-  # Share 2: Schema-level sharing with multiple pipelines
-  # When sharing a schema, list all tables explicitly and create pipelines with _1, _2 suffixes
-  - name: test_audit_share
-    description: "Audit schema share - all tables in schema with individual pipelines"  # Share description
+  # ========================================
+  # Share 3: Multi-Region Compliance Data
+  # ========================================
+  - name: compliance_audit_share
+    comment: "Compliance and audit data with multi-timezone schedules"
     recipients:
-      - test-recipient-d2o
+      - external_partner_recipient
 
-    # Share assets: All tables from catalog.audit_schema
-    # Listed explicitly as 3-part names (catalog.schema.table)
     share_assets:
-      - catalog.audit_schema.activity_log
-      - catalog.audit_schema.error_log
-      - catalog.audit_schema.access_log
+      - compliance_catalog.audit_schema.transaction_logs
+      - compliance_catalog.audit_schema.access_records
+      - compliance_catalog.audit_schema.policy_changes
 
-    # Target workspace for audit data
     delta_share:
-      ext_catalog_name: audit_target_catalog
-      ext_schema_name: audit_target_schema
-      prefix_assetname: "rt_"
+      ext_catalog_name: compliance_prod
+      ext_schema_name: audit_trail
       tags:
         - production
         - compliance
+        - gdpr
+        - sox
 
-    # Schema-level sharing: One pipeline per table with naming suffix _1, _2, _3
     pipelines:
-      # Pipeline 1: activity_log (continuous)
-      - name_prefix: audit_sync_pipeline_1
+      # Pipeline 1: Transaction Logs (EMEA hours)
+      - name_prefix: compliance_txn_emea
+        source_asset: compliance_catalog.audit_schema.transaction_logs
+        target_asset: audit_transaction_logs  # Target table name
+        scd_type: "2"
+        key_columns: "transaction_id,timestamp"
+        serverless: false
+        notification:
+          - compliance-team@jll.com
+        tags:
+          environment: production
+          region: EMEA
+          compliance: SOX
+        schedule:
+          cron: "0 0 1 * * ?"  # 1:00 AM London time
+          timezone: "Europe/London"
+
+      # Pipeline 2: Access Records (APAC hours)
+      - name_prefix: compliance_access_apac
+        source_asset: compliance_catalog.audit_schema.access_records
+        target_asset: audit_access_records  # Target table name
+        scd_type: "2"
+        key_columns: "access_id,user_id,timestamp"
+        serverless: true
+        notification:
+          - compliance-team@jll.com
+        tags:
+          environment: production
+          region: APAC
+          compliance: GDPR
+        schedule:
+          cron: "0 0 2 * * ?"  # 2:00 AM Tokyo time
+          timezone: "Asia/Tokyo"
+
+      # Pipeline 3: Policy Changes (continuous, with custom target)
+      - name_prefix: compliance_policy_stream
+        source_asset: compliance_catalog.audit_schema.policy_changes
+        target_asset: policy_changes_stream  # Target table name
         scd_type: "1"
         key_columns: ""
         serverless: true
+        ext_catalog_name: legal_catalog  # Custom catalog for legal team
+        ext_schema_name: policy_tracking  # Custom schema
         notification:
-          - audit-team@jll.com
+          - legal-team@jll.com
+          - compliance-team@jll.com
         tags:
           environment: production
-          table: activity_log
-
-        schedule:
-          catalog.audit_schema.activity_log: "continuous"  # Real-time
-
-      # Pipeline 2: error_log (every 15 minutes)
-      - name_prefix: audit_sync_pipeline_2
-        scd_type: "1"
-        key_columns: ""
-        serverless: true
-        notification:
-          - audit-team@jll.com
-        tags:
-          environment: production
-          table: error_log
-
-        schedule:
-          catalog.audit_schema.error_log:
-            cron: "0 */15 * * * ?"  # Every 15 minutes
-            timezone: "UTC"
-
-      # Pipeline 3: access_log (hourly)
-      - name_prefix: audit_sync_pipeline_3
-        scd_type: "1"
-        key_columns: ""
-        serverless: true
-        notification:
-          - audit-team@jll.com
-        tags:
-          environment: production
-          table: access_log
-
-        schedule:
-          catalog.audit_schema.access_log:
-            cron: "0 0 * * * ?"  # Every hour
-            timezone: "UTC"
+          compliance: ALL
+          priority: critical
+        schedule: "continuous"

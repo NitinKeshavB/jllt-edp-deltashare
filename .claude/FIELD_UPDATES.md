@@ -98,7 +98,7 @@ share:
     description: "Analytics data for Q1 reporting"  # NEW FIELD
     share_assets:
       - catalog.schema.sales_data
-    
+
     pipelines:
       - name_prefix: analytics_pipeline
         source_asset: catalog.schema.sales_data

@@ -1,0 +1,359 @@
+# ===================================================================
+# SharePack Configuration Template
+# ===================================================================
+# This is a comprehensive template showing all available features.
+# Choose either NEW or UPDATE strategy (not both in same file).
+# ===================================================================
+
+metadata:
+  # ==== REQUIRED FIELDS ====
+  requestor: john.doe@company.com  # Valid email or AD group (e.g., "DataEngineering-Team")
+  business_line: "Finance Analytics"
+  project_name: "Q1 2025 Finance Reporting"  # Used for deduplication
+  strategy: NEW  # NEW (create resources) or UPDATE (modify existing)
+
+  # ==== GOVERNANCE FIELDS (REQUIRED) ====
+  delta_share_region: AM  # AM or EMEA
+  configurator: data-engineering@company.com
+  approver: finance-leadership@company.com
+  executive_team: data-governance@company.com
+  approver_status: approved  # approved | declined | request_more_info | pending
+  workspace_url: "https://adb-1234567890123456.12.azuredatabricks.net"
+  servicenow: "INC0012345"  # ServiceNow ticket number or URL
+
+  # ==== OPTIONAL FIELDS ====
+  version: "1.0"
+  contact_email: john.doe@company.com  # Required if different from requestor
+  description: "Finance analytics data sharing for Q1 2025"
+
+# ===================================================================
+# RECIPIENTS
+# ===================================================================
+recipient:
+  # -------------------------------------------------------------------
+  # D2O Recipient (Databricks-to-Open) - TOKEN authentication
+  # For external partners without Databricks infrastructure
+  # -------------------------------------------------------------------
+  - name: external_analytics_partner
+    type: D2O
+    recipient: partner@external-company.com
+    recipient_ips_to_add:  # Optional IP allowlist
+      - 203.0.113.0/24  # CIDR notation
+      - 198.51.100.50   # Single IP
+    token_expiry: 90  # Days (default: 90)
+    token_rotation: false
+    comment: "External analytics partner for Q1 reporting"
+
+  # -------------------------------------------------------------------
+  # D2D Recipient (Databricks-to-Databricks) - DATABRICKS authentication
+  # For internal teams with Databricks workspaces
+  # -------------------------------------------------------------------
+  - name: internal_analytics_team
+    type: D2D
+    recipient: analytics-team@company.com
+    recipient_databricks_org: "aws:us-west-2:a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # Metastore ID
+    comment: "Internal analytics team workspace"
+
+  # -------------------------------------------------------------------
+  # UPDATE Strategy: Remove IPs from existing recipient
+  # Only applicable when strategy=UPDATE
+  # -------------------------------------------------------------------
+  # - name: external_analytics_partner  # Must already exist
+  #   type: D2O
+  #   recipient: partner@external-company.com
+  #   recipient_ips_to_add:
+  #     - 203.0.113.100  # Add new IP
+  #   recipient_ips_to_remove:
+  #     - 198.51.100.50  # Remove old IP
+  #   comment: "Updated IP allowlist"
+
+# ===================================================================
+# SHARES AND PIPELINES
+# ===================================================================
+share:
+  # ============================================================
+  # Share 1: Daily Financial Reports
+  # ============================================================
+  - name: finance_daily_reports
+    comment: "Daily financial reporting data for Q1 2025"
+
+    # Recipients who can access this share
+    recipients:
+      - external_analytics_partner
+      - internal_analytics_team
+
+    # Tables/views to share (3-part names: catalog.schema.table)
+    # IMPORTANT: Every asset MUST have a corresponding pipeline
+    share_assets:
+      - main_catalog.finance_prod.daily_transactions
+      - main_catalog.finance_prod.revenue_summary
+      - main_catalog.finance_prod.customer_metrics
+
+    # Default target workspace configuration for all pipelines
+    delta_share:
+      ext_catalog_name: analytics_prod
+      ext_schema_name: finance_shared
+      tags:
+        - production
+        - finance
+        - q1_2025
+
+    # Pipelines - one per share_asset
+    pipelines:
+      # --------------------------------------------------------
+      # Pipeline 1: Daily Transactions (SCD Type 2)
+      # --------------------------------------------------------
+      - name_prefix: finance_transactions_daily
+        source_asset: main_catalog.finance_prod.daily_transactions  # Must match share_asset
+        target_asset: daily_transactions_external  # Target table name
+        scd_type: "2"  # Type 2: Track changes with history
+        key_columns: "transaction_id,transaction_date"  # Must exist in source table
+        serverless: true
+        notification:
+          - finance-ops@company.com
+          - data-quality@company.com
+        tags:
+          environment: production
+          owner: finance_team
+          data_classification: confidential
+          sla: daily
+        schedule:
+          cron: "0 0 2 * * ?"  # Daily at 2:00 AM
+          timezone: "America/New_York"
+        description: "Daily transaction data sync with SCD Type 2"
+
+      # --------------------------------------------------------
+      # Pipeline 2: Revenue Summary (SCD Type 1, Custom Schedule)
+      # --------------------------------------------------------
+      - name_prefix: finance_revenue_summary
+        source_asset: main_catalog.finance_prod.revenue_summary
+        target_asset: revenue_summary_external
+        scd_type: "1"  # Type 1: Overwrite (no history)
+        key_columns: ""  # Empty for Type 1
+        serverless: true
+        notification:
+          - finance-leadership@company.com
+        tags:
+          environment: production
+          owner: finance_team
+          data_classification: internal
+        schedule:
+          cron: "0 0 */6 * * ?"  # Every 6 hours
+          timezone: "UTC"
+
+      # --------------------------------------------------------
+      # Pipeline 3: Customer Metrics (Custom Catalog Override)
+      # --------------------------------------------------------
+      - name_prefix: finance_customer_metrics
+        source_asset: main_catalog.finance_prod.customer_metrics
+        target_asset: customer_metrics_v1
+        scd_type: "2"
+        key_columns: "customer_id,metric_date"
+        serverless: true
+        # Override default catalog/schema for this pipeline only
+        ext_catalog_name: customer_analytics_catalog
+        ext_schema_name: metrics_schema
+        notification:
+          - customer-analytics@company.com
+        tags:
+          environment: production
+          owner: customer_analytics_team
+          pii: "true"
+        schedule:
+          cron: "0 0 0 * * ?"  # Daily at midnight
+          timezone: "America/Los_Angeles"
+
+  # ============================================================
+  # Share 2: Real-time Operations Metrics
+  # ============================================================
+  - name: operations_realtime_metrics
+    comment: "Real-time operational metrics and monitoring data"
+    recipients:
+      - internal_analytics_team
+
+    share_assets:
+      - ops_catalog.metrics_prod.system_health
+      - ops_catalog.metrics_prod.error_logs
+      - ops_catalog.metrics_prod.user_activity
+
+    delta_share:
+      ext_catalog_name: ops_analytics
+      ext_schema_name: realtime_metrics
+      tags:
+        - production
+        - operations
+        - monitoring
+
+    pipelines:
+      # --------------------------------------------------------
+      # Pipeline 4: System Health (High Frequency)
+      # --------------------------------------------------------
+      - name_prefix: ops_system_health_monitor
+        source_asset: ops_catalog.metrics_prod.system_health
+        target_asset: system_health_realtime
+        scd_type: "1"
+        key_columns: ""
+        serverless: true
+        notification:
+          - ops-team@company.com
+          - sre-oncall@company.com
+        tags:
+          environment: production
+          monitoring: critical
+          alert_enabled: "true"
+        schedule:
+          cron: "0 */5 * * * ?"  # Every 5 minutes
+          timezone: "UTC"
+
+      # --------------------------------------------------------
+      # Pipeline 5: Error Logs (Medium Frequency)
+      # --------------------------------------------------------
+      - name_prefix: ops_error_logs_sync
+        source_asset: ops_catalog.metrics_prod.error_logs
+        target_asset: error_logs_archive
+        scd_type: "1"
+        key_columns: ""
+        serverless: true
+        notification:
+          - ops-team@company.com
+        tags:
+          environment: production
+          log_type: errors
+          retention: 90_days
+        schedule:
+          cron: "0 */15 * * * ?"  # Every 15 minutes
+          timezone: "UTC"
+
+      # --------------------------------------------------------
+      # Pipeline 6: User Activity (Business Hours)
+      # --------------------------------------------------------
+      - name_prefix: ops_user_activity_tracking
+        source_asset: ops_catalog.metrics_prod.user_activity
+        target_asset: user_activity_analytics
+        scd_type: "2"
+        key_columns: "user_id,activity_timestamp,session_id"
+        serverless: true
+        notification:
+          - analytics-team@company.com
+        tags:
+          environment: production
+          analytics: user_behavior
+          pii: "true"
+        schedule:
+          cron: "0 0 9-17 * * MON-FRI"  # Business hours (9 AM - 5 PM, Mon-Fri)
+          timezone: "America/New_York"
+
+# ===================================================================
+# UPDATE STRATEGY EXAMPLES
+# ===================================================================
+# When using strategy=UPDATE, you can:
+#
+# 1. Update mutable pipeline fields:
+#    - target_asset: Change target table name
+#    - key_columns: Add/modify columns (validated against source)
+#    - notifications: Add/remove email addresses
+#    - serverless: Change compute type
+#    - tags: Add/modify tags
+#
+# 2. Manage schedules:
+#    a) Update existing schedule:
+#       schedule:
+#         cron: "0 0 6 * * ?"  # Change time
+#         timezone: "UTC"      # Change timezone
+#
+#    b) Add new schedule (if none exists):
+#       schedule:
+#         cron: "0 0 0 * * ?"
+#         timezone: "UTC"
+#
+#    c) Remove schedule:
+#       schedule:
+#         action: "remove"
+#
+#    d) No changes (omit schedule field)
+#
+# 3. CANNOT change (immutable fields):
+#    - source_asset (source table)
+#    - scd_type (SCD type)
+#
+# Example UPDATE configuration:
+# ===================================================================
+# metadata:
+#   strategy: UPDATE
+#   # ... same metadata ...
+#
+# share:
+#   - name: finance_daily_reports  # Must exist
+#     pipelines:
+#       - name_prefix: finance_transactions_daily  # Must exist
+#         source_asset: main_catalog.finance_prod.daily_transactions  # MUST match existing
+#         scd_type: "2"  # MUST match existing
+#         target_asset: daily_txn_v2  # ✅ CAN UPDATE
+#         key_columns: "transaction_id,transaction_date,customer_id"  # ✅ CAN UPDATE (validated)
+#         schedule:
+#           cron: "0 0 3 * * ?"  # ✅ UPDATE: Changed from 2 AM to 3 AM
+#           timezone: "America/New_York"
+#
+#       - name_prefix: finance_revenue_summary
+#         source_asset: main_catalog.finance_prod.revenue_summary
+#         scd_type: "1"
+#         schedule:
+#           action: "remove"  # ✅ REMOVE: Delete schedule
+
+# ===================================================================
+# VALIDATION NOTES
+# ===================================================================
+# 1. Metadata:
+#    - requestor: Valid email or AD group name
+#    - workspace_url: Must be HTTPS and reachable
+#    - servicenow: Required field
+#
+# 2. Share Assets:
+#    - Format: catalog.schema.table (3 parts)
+#    - Every share_asset MUST have a corresponding pipeline
+#
+# 3. Pipelines:
+#    - source_asset MUST match a share_asset
+#    - key_columns MUST exist in source table (validated)
+#    - scd_type: "1" or "2"
+#
+# 4. Schedules:
+#    - cron: Quartz 6-field format (sec min hour day month dow)
+#    - timezone: Valid IANA timezone
+#
+# 5. Strategy-Specific:
+#    - NEW: Can create all new resources
+#    - UPDATE: Only updates existing resources (no creation)
+#
+# ===================================================================
+# CRON EXPRESSION EXAMPLES
+# ===================================================================
+# Format: second minute hour day-of-month month day-of-week
+#
+# Every hour:           0 0 * * * ?
+# Every 6 hours:        0 0 */6 * * ?
+# Every 15 minutes:     0 */15 * * * ?
+# Every 5 minutes:      0 */5 * * * ?
+# Daily at midnight:    0 0 0 * * ?
+# Daily at 2 AM:        0 0 2 * * ?
+# Daily at 6 AM:        0 0 6 * * ?
+# Weekdays at 9 AM:     0 0 9 ? * MON-FRI
+# Every Monday at 9 AM: 0 0 9 ? * MON
+# First of month:       0 0 0 1 * ?
+# Business hours:       0 0 9-17 * * MON-FRI
+#
+# ===================================================================
+# ERROR HANDLING
+# ===================================================================
+# Non-retryable errors (fail immediately):
+# - Validation errors (invalid emails, missing fields)
+# - Immutable field changes (source_asset, scd_type in UPDATE)
+# - Invalid key_columns
+# - Resource doesn't exist (UPDATE strategy)
+#
+# Retryable errors (retry once after 10 minutes):
+# - Timeout errors
+# - Connection errors
+# - HTTP 503/504 errors
+#
+# ===================================================================

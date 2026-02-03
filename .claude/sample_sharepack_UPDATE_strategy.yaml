@@ -1,0 +1,261 @@
+# ===================================================================
+# SharePack YAML - UPDATE Strategy (Modify Existing Resources)
+# ===================================================================
+# This example demonstrates UPDATE strategy features:
+# - Only updates EXISTING resources (no creation)
+# - Immutable field protection (source_asset, scd_type)
+# - Key column validation
+# - Schedule management (add, update, remove)
+# ===================================================================
+
+metadata:
+  # ==== REQUIRED FIELDS ====
+  requestor: john.doe@company.com
+  business_line: "Finance Analytics"
+  strategy: UPDATE  # UPDATE = Modify existing resources only
+
+  # ==== GOVERNANCE FIELDS (REQUIRED) ====
+  delta_share_region: AM
+  configurator: data-team@company.com
+  approver: finance-leadership@company.com
+  executive_team: data-governance@company.com
+  approver_status: approved
+  workspace_url: "https://adb-1234567890123456.12.azuredatabricks.net"
+  servicenow: "INC0067890"  # Different ticket for this update
+
+  # ==== OPTIONAL FIELDS ====
+  project_name: "Q1 2025 Finance Reporting"
+  version: "2.0"  # Updated version
+  contact_email: john.doe@company.com
+  description: "Updated finance analytics configuration"
+
+# ===================================================================
+# RECIPIENTS - UPDATE Strategy
+# ===================================================================
+recipient:
+  # UPDATE EXISTING D2O RECIPIENT
+  # - Can update: IP allowlist, token expiry, comment
+  # - Cannot create new recipient in UPDATE strategy
+  - name: external_partner_d2o  # MUST exist in Databricks
+    type: D2O
+    recipient: partner@external-company.com
+    recipient_ips_to_add:  # Add new IPs to allowlist
+      - 203.0.113.100  # New IP to add
+    recipient_ips_to_remove:  # Remove IPs from allowlist
+      - 198.51.100.50  # Old IP to remove
+    token_expiry: 180  # Update expiry to 180 days
+    comment: "Updated external analytics partner"
+
+  # UPDATE EXISTING D2D RECIPIENT
+  - name: internal_team_d2d  # MUST exist in Databricks
+    type: D2D
+    recipient: analytics-team@company.com
+    recipient_databricks_org: "aws:us-west-2:a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    comment: "Updated internal analytics workspace"
+
+# ===================================================================
+# SHARES AND PIPELINES - UPDATE Strategy
+# ===================================================================
+share:
+  # ============================================================
+  # Share 1: Update Existing Share
+  # ============================================================
+  - name: finance_daily_reports  # MUST exist in Databricks
+    comment: "Updated daily financial reporting data"
+    recipients:
+      - external_partner_d2o
+      - internal_team_d2d
+
+    # Update share assets
+    share_assets:
+      - main_catalog.finance.daily_transactions
+      - main_catalog.finance.revenue_summary
+
+    delta_share:
+      ext_catalog_name: analytics_prod
+      ext_schema_name: finance_shared
+
+    pipelines:
+      # =========================================================
+      # Pipeline 1: Update target_asset and key_columns only
+      # =========================================================
+      - name_prefix: finance_transactions_pipeline  # MUST exist in Databricks
+        source_asset: main_catalog.finance.daily_transactions  # IMMUTABLE - cannot change!
+        target_asset: daily_txn_v2  # ✅ CAN UPDATE - changed target table name
+        scd_type: "2"  # IMMUTABLE - cannot change! Must match existing
+        key_columns: "transaction_id,transaction_date,customer_id"  # ✅ CAN UPDATE - validated against source table
+        serverless: true  # ✅ CAN UPDATE
+        notification:  # ✅ CAN UPDATE
+          - finance-ops@company.com
+          - new-team@company.com  # Added new email
+        tags:  # ✅ CAN UPDATE
+          environment: production
+          owner: finance_team
+          updated: "2025-Q1"
+        schedule:  # ✅ CAN UPDATE - update existing schedule
+          cron: "0 0 3 * * ?"  # Changed from 2 AM to 3 AM
+          timezone: "America/New_York"
+
+      # =========================================================
+      # Pipeline 2: Add new schedule (previously had none)
+      # =========================================================
+      - name_prefix: finance_revenue_pipeline  # MUST exist
+        source_asset: main_catalog.finance.revenue_summary  # IMMUTABLE
+        target_asset: revenue_summary_external  # No change
+        scd_type: "1"  # IMMUTABLE
+        key_columns: ""
+        serverless: true
+        notification:
+          - finance-leadership@company.com
+        schedule:  # ✅ ADD NEW SCHEDULE
+          cron: "0 0 */12 * * ?"  # Every 12 hours
+          timezone: "UTC"
+
+  # ============================================================
+  # Share 2: Advanced Schedule Management
+  # ============================================================
+  - name: operations_realtime  # MUST exist
+    comment: "Updated operational metrics"
+    recipients:
+      - internal_team_d2d
+
+    share_assets:
+      - ops_catalog.metrics.system_health
+      - ops_catalog.metrics.error_logs
+
+    delta_share:
+      ext_catalog_name: ops_analytics
+      ext_schema_name: realtime
+
+    pipelines:
+      # =========================================================
+      # Pipeline 3: Remove schedule (will be triggered manually)
+      # =========================================================
+      - name_prefix: ops_health_stream  # MUST exist
+        source_asset: ops_catalog.metrics.system_health  # IMMUTABLE
+        target_asset: system_health_stream
+        scd_type: "1"  # IMMUTABLE
+        key_columns: ""
+        serverless: true
+        notification:
+          - ops-team@company.com
+        schedule:  # ✅ REMOVE SCHEDULE
+          action: "remove"
+
+      # =========================================================
+      # Pipeline 4: Update timezone only (keep same cron)
+      # =========================================================
+      - name_prefix: ops_errors_pipeline  # MUST exist
+        source_asset: ops_catalog.metrics.error_logs  # IMMUTABLE
+        target_asset: error_logs_stream
+        scd_type: "1"  # IMMUTABLE
+        key_columns: ""
+        serverless: true
+        notification:
+          - ops-team@company.com
+        schedule:  # ✅ UPDATE TIMEZONE ONLY
+          cron: "0 */15 * * * ?"  # Keep same: every 15 minutes
+          timezone: "America/Los_Angeles"  # Changed from UTC
+
+# ===================================================================
+# IMPORTANT: UPDATE Strategy Restrictions
+# ===================================================================
+#
+# 1. IMMUTABLE FIELDS (Cannot be changed):
+#    - source_asset (source table)
+#    - scd_type (SCD type)
+#
+#    ❌ WILL FAIL:
+#    source_asset: main_catalog.finance.NEW_TABLE  # Error!
+#    scd_type: "1"  # If existing is "2", this will fail!
+#
+# 2. MUTABLE FIELDS (Can be updated):
+#    ✅ target_asset (target table name)
+#    ✅ key_columns (validated against source table)
+#    ✅ notifications
+#    ✅ serverless
+#    ✅ tags
+#    ✅ schedule (add, update, remove)
+#
+# 3. KEY COLUMNS VALIDATION:
+#    - Must exist as columns in the source table
+#    - Case-insensitive matching
+#    - Comma-separated list
+#
+#    ❌ WILL FAIL:
+#    key_columns: "invalid_column"  # If column doesn't exist in source
+#
+# 4. SCHEDULE OPERATIONS:
+#    a) Update existing schedule:
+#       schedule:
+#         cron: "0 0 6 * * ?"  # New cron
+#         timezone: "UTC"      # New timezone
+#
+#    b) Add new schedule (if none exists):
+#       schedule:
+#         cron: "0 0 0 * * ?"
+#         timezone: "UTC"
+#
+#    c) Remove schedule:
+#       schedule:
+#         action: "remove"
+#
+#    d) No changes (omit schedule field):
+#       # Don't include schedule section
+#
+# 5. RESOURCE EXISTENCE:
+#    - All recipients MUST exist in Databricks
+#    - All shares MUST exist in Databricks
+#    - All pipelines MUST exist in Databricks
+#
+#    ❌ WILL FAIL:
+#    - name: new_recipient  # Error! UPDATE cannot create new recipients
+#    - name: new_share      # Error! UPDATE cannot create new shares
+#    - name_prefix: new_pipeline  # Error! UPDATE cannot create new pipelines
+#
+# 6. ERROR HANDLING:
+#    - Non-retryable errors (validation, immutable field changes):
+#      → Fail immediately, no retry
+#      → Status: FAILED
+#
+#    - Retryable errors (timeouts, network issues):
+#      → Retry once after 10 minutes
+#      → If retry fails: Status: FAILED with "Retried failed request and stopping"
+#
+# 7. ROLLBACK BEHAVIOR:
+#    - ANY failure triggers rollback of ALL changes
+#    - Database records rolled back
+#    - Share pack status set to FAILED
+#
+# ===================================================================
+# VALIDATION EXAMPLE SCENARIOS
+# ===================================================================
+#
+# Scenario 1: Valid Update
+# ✅ Changes target_asset from "daily_txn" to "daily_txn_v2"
+# ✅ Adds new column to key_columns (validated against source)
+# ✅ Updates schedule cron expression
+# Result: SUCCESS
+#
+# Scenario 2: Invalid - Change source_asset
+# ❌ Tries to change source_asset to different table
+# Result: FAILED immediately
+# Error: "Cannot change source_asset for existing pipeline"
+#
+# Scenario 3: Invalid - Change scd_type
+# ❌ Tries to change scd_type from "2" to "1"
+# Result: FAILED immediately
+# Error: "Cannot change scd_type for existing pipeline"
+#
+# Scenario 4: Invalid - Invalid key_columns
+# ❌ Specifies key_columns that don't exist in source table
+# Result: FAILED immediately
+# Error: "Invalid key_columns: column 'invalid_col' does not exist in source table"
+#
+# Scenario 5: Valid - Schedule Management
+# ✅ Pipeline 1: Updates schedule cron and timezone
+# ✅ Pipeline 2: Adds new schedule (had none before)
+# ✅ Pipeline 3: Removes schedule
+# Result: SUCCESS
+#
+# ===================================================================

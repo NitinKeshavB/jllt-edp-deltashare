@@ -27,16 +27,20 @@ class SharePackMetadata(BaseModel):
     version: str = "1.0"
     last_updated: Optional[str] = None
     owner: Optional[str] = None
-    contact_email: Optional[str] = None
+    contact_email: str  # Contact email (required)
     business_line: str  # Tenant name
     delta_share_region: str  # AM or EMEA
     configurator: str  # AD group or comma-separated emails
     approver: str  # AD group or comma-separated emails
     executive_team: str  # AD group or comma-separated emails
-    approver_status: str = "approved"  # approved | declined | request_more_info
+    approver_status: str = "approved"  # approved | declined | request_more_info | pending
     requestor: str  # Email of person submitting
     strategy: str = "NEW"  # NEW or UPDATE
     workspace_url: str  # Databricks workspace URL for provisioning (required)
+    servicenow_ticket: str = Field(alias="servicenow")  # ServiceNow ticket number or link (required)
+
+    class Config:
+        populate_by_name = True  # Allow both 'servicenow_ticket' and 'servicenow'
 
     @field_validator("workspace_url")
     @classmethod
@@ -73,13 +77,92 @@ class SharePackMetadata(BaseModel):
             raise ValueError("approver_status must be approved, declined, request_more_info, or pending")
         return v_lower
 
-    @field_validator("requestor", "contact_email")
+    @field_validator("requestor", "contact_email", "configurator", "approver", "executive_team")
     @classmethod
-    def validate_email(cls, v: Optional[str]) -> Optional[str]:
-        """Basic email validation."""
-        if v and "@" not in v:
-            raise ValueError(f"Invalid email format: {v}")
+    def validate_email_or_ad_group(cls, v: str, info) -> str:
+        """
+        Comprehensive validation for email addresses or AD group names.
+
+        Accepts:
+        - Valid email addresses (user@domain.com)
+        - AD group names (may or may not contain @)
+        - Comma-separated values of the above
+        """
+        import re
+
+        if not v or not v.strip():
+            raise ValueError(f"{info.field_name} cannot be empty")
+
+        # Handle comma-separated values
+        entries = [entry.strip() for entry in v.split(",")]
+
+        for entry in entries:
+            if not entry:
+                raise ValueError(f"{info.field_name} contains empty value in comma-separated list")
+
+            # If it contains @, validate as email
+            if "@" in entry:
+                # Email validation
+                try:
+                    local, domain = entry.rsplit("@", 1)
+                except ValueError:
+                    raise ValueError(f"Invalid email format in {info.field_name}: {entry}")
+
+                if not local or not domain:
+                    raise ValueError(f"Invalid email format (empty local or domain) in {info.field_name}: {entry}")
+
+                # Check domain has at least one dot
+                if "." not in domain:
+                    raise ValueError(f"Invalid email domain (missing .) in {info.field_name}: {entry}")
+
+                # Check TLD is at least 2 characters
+                tld = domain.rsplit(".", 1)[-1]
+                if len(tld) < 2:
+                    raise ValueError(f"Invalid email TLD (too short) in {info.field_name}: {entry}")
+
+                # Validate common email provider domains to catch typos
+                common_providers = {
+                    "gmail": "gmail.com",
+                    "yahoo": "yahoo.com",
+                    "ymail": "ymail.com",
+                    "outlook": "outlook.com",
+                    "hotmail": "hotmail.com",
+                }
+
+                domain_lower = domain.lower()
+                for provider, expected_domain in common_providers.items():
+                    if domain_lower.startswith(provider + ".") and domain_lower != expected_domain:
+                        raise ValueError(
+                            f"Invalid email domain in {info.field_name}: {entry} "
+                            f"(did you mean {local}@{expected_domain}?)"
+                        )
+
+                # Validate local part (before @) contains only valid characters
+                if not re.match(r"^[a-zA-Z0-9._+-]+$", local):
+                    raise ValueError(f"Invalid email local part in {info.field_name}: {entry}")
+
+            else:
+                # AD group name validation (no @ symbol)
+                # AD groups can contain letters, numbers, hyphens, underscores, spaces, dots
+                if not re.match(r"^[a-zA-Z0-9._\s-]+$", entry):
+                    raise ValueError(
+                        f"Invalid AD group name in {info.field_name}: {entry} "
+                        f"(must contain only letters, numbers, dots, hyphens, underscores, spaces)"
+                    )
+
+                # Must be at least 2 characters
+                if len(entry) < 2:
+                    raise ValueError(f"AD group name too short in {info.field_name}: {entry}")
+
         return v
+
+    @field_validator("servicenow_ticket")
+    @classmethod
+    def validate_servicenow_ticket(cls, v: str) -> str:
+        """Validate ServiceNow ticket is provided."""
+        if not v or not v.strip():
+            raise ValueError("ServiceNow ticket number or link is required")
+        return v.strip()
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -92,11 +175,27 @@ class RecipientConfig(BaseModel):
 
     name: str  # Unique recipient name
     type: str  # D2D or D2O
-    recipient: str  # Contact email
+    recipient: Optional[
+        str
+    ] = None  # Recipient email (optional, for identification only, not used as point of contact)
+    description: Optional[str] = Field(
+        default="", alias="comment"
+    )  # Recipient description/comment (accepts both 'description' and 'comment')
     recipient_databricks_org: str = ""  # Databricks org/metastore ID (required for D2D)
-    recipient_ips: List[str] = Field(default_factory=list)  # IP allowlist (D2O only)
-    token_expiry: int = 30  # Days
+
+    # IP Management - Two approaches (D2O only):
+    # Approach 1: Declarative - specify complete desired state (for UPDATE strategy)
+    recipient_ips: List[str] = Field(default_factory=list)  # Complete list of IPs that should exist
+
+    # Approach 2: Explicit - specify incremental changes (for NEW strategy and UPDATE strategy)
+    recipient_ips_to_add: List[str] = Field(default_factory=list)  # IPs to add (incremental)
+    recipient_ips_to_remove: List[str] = Field(default_factory=list)  # IPs to remove (incremental)
+
+    token_expiry: int = 0  # Days (for D2O recipients) - 0 means use Databricks default (120 days)
     token_rotation: bool = False
+
+    class Config:
+        populate_by_name = True  # Allow both 'description' and 'comment' to populate the field
 
     @field_validator("type")
     @classmethod
@@ -118,9 +217,9 @@ class RecipientConfig(BaseModel):
     @field_validator("token_expiry")
     @classmethod
     def validate_token_expiry(cls, v: int) -> int:
-        """Validate token expiry is positive."""
-        if v <= 0:
-            raise ValueError("token_expiry must be positive")
+        """Validate token expiry is non-negative (0 means use Databricks default of 120 days)."""
+        if v < 0:
+            raise ValueError("token_expiry must be non-negative (0 = Databricks default, >0 = custom days)")
         return v
 
     @model_validator(mode="after")
@@ -178,8 +277,13 @@ class PipelineConfig(BaseModel):
     """Pipeline configuration for a share."""
 
     name_prefix: str  # Pipeline name = {prefix}_{asset_name}
-    source_asset: Optional[str] = None  # Which share_asset this pipeline processes (catalog.schema.table) - OPTIONAL for v1.0 compatibility
-    target_asset: Optional[str] = None  # Target table name for the pipeline (catalog.schema.table) - used as pipelines.target_table
+    source_asset: Optional[
+        str
+    ] = None  # Which share_asset this pipeline processes (catalog.schema.table) - OPTIONAL for v1.0 compatibility
+    target_asset: Optional[
+        str
+    ] = None  # Target table name for the pipeline (catalog.schema.table) - used as pipelines.target_table
+    description: Optional[str] = Field(default="", alias="comment")  # Pipeline/schedule description (accepts both)
     schedule: Union[CronSchedule, str, Dict[str, Any]]  # Cron schedule, "continuous", or old v1.0 dict format
     notification: List[str] = Field(default_factory=list)  # Email/AD group list
     tags: Dict[str, str] = Field(default_factory=dict)  # Key-value tags
@@ -188,6 +292,9 @@ class PipelineConfig(BaseModel):
     key_columns: str = ""  # Comma-separated (required for SCD2)
     ext_catalog_name: Optional[str] = None  # Override target catalog (falls back to delta_share config)
     ext_schema_name: Optional[str] = None  # Override target schema (falls back to delta_share config)
+
+    class Config:
+        populate_by_name = True  # Allow both 'description' and 'comment'
 
     @field_validator("name_prefix")
     @classmethod
@@ -207,7 +314,9 @@ class PipelineConfig(BaseModel):
 
     @field_validator("schedule")
     @classmethod
-    def validate_schedule(cls, v: Union[CronSchedule, str, Dict[str, Any]]) -> Union[CronSchedule, str, Dict[str, Any]]:
+    def validate_schedule(
+        cls, v: Union[CronSchedule, str, Dict[str, Any]]
+    ) -> Union[CronSchedule, str, Dict[str, Any]]:
         """Validate schedule format - supports v1.0 (dict) and v2.0 (CronSchedule/str) formats."""
         if isinstance(v, str):
             # Must be "continuous"
@@ -262,6 +371,7 @@ class PipelineConfig(BaseModel):
                         self.schedule = schedule_value
 
                     from loguru import logger
+
                     logger.warning(
                         f"[MIGRATION] Pipeline '{self.name_prefix}': Migrated v1.0 schedule format. "
                         f"Extracted source_asset='{self.source_asset}' from schedule. "
@@ -292,10 +402,14 @@ class ShareConfig(BaseModel):
     """Share configuration with assets, recipients, and pipelines."""
 
     name: str  # Share name
+    description: Optional[str] = Field(default="", alias="comment")  # Share description/comment (accepts both)
     share_assets: List[str]  # List of assets (catalog, catalog.schema, catalog.schema.table, etc.)
     recipients: List[str]  # List of recipient names (references RecipientConfig.name)
     delta_share: DeltaShareConfig  # Target workspace config
     pipelines: List[PipelineConfig] = Field(default_factory=list)  # Pipeline configs
+
+    class Config:
+        populate_by_name = True  # Allow both 'description' and 'comment'
 
     @field_validator("name")
     @classmethod
@@ -339,13 +453,13 @@ class SharePackConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_recipient_references(self):
-        """Ensure all recipient names referenced in shares exist."""
-        known_recipients = {r.name for r in self.recipient}
+        """Ensure all recipient names referenced in shares exist in YAML.
 
-        for share in self.share:
-            for recipient_name in share.recipients:
-                if recipient_name not in known_recipients:
-                    raise ValueError(f"Share '{share.name}' references unknown recipient '{recipient_name}'")
+        Note: Recipients not in YAML will be checked against Databricks during provisioning.
+        This allows referencing existing Databricks recipients without re-declaring them.
+        """
+        # This validation is now informational only - actual validation happens during provisioning
+        # where we can check if the recipient exists in Databricks
 
         return self
 

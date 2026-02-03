@@ -1,0 +1,63 @@
+# ===================================================================
+# CORRECT WAY: Remove Schedule
+# ===================================================================
+
+metadata:
+  requestor: nitinkeshav11@outlook.com
+  business_line: "Finance Analytics"
+  project_name: "Q1 2025"
+  strategy: UPDATE
+  delta_share_region: AM
+  configurator: nitinkeshav11@outlook.com
+  approver: nitinkeshav11@outlook.com
+  executive_team: nitinkeshav11@outlook.com
+  approver_status: approved
+  workspace_url: "https://your-workspace.azuredatabricks.net"
+  servicenow: "INC0012345"
+
+share:
+  - name: your_share_name
+    recipients:
+      - your_recipient
+
+    share_assets:
+      - citibike_dev.01_bronze.jc_citibike_01
+
+    delta_share:
+      ext_catalog_name: your_catalog
+      ext_schema_name: your_schema
+
+    pipelines:
+      - name_prefix: wd_pipeline_2
+        source_asset: citibike_dev.01_bronze.jc_citibike_01
+        target_asset: citibike_daily_sales_03
+        scd_type: "1"
+        key_columns: "ride_id"
+        serverless: true
+        notification:
+          - nitinkeshav11@outlook.com
+        tags:
+          environment: production
+          project: q1_analytics
+
+        # ✅ CORRECT: Only action field, no cron/timezone
+        schedule:
+          action: "remove"
+
+# ===================================================================
+# ❌ INCORRECT - Don't do this:
+# ===================================================================
+# pipelines:
+#   - name_prefix: wd_pipeline_2
+#     schedule:
+#       cron: "0 0 2 * * ?"        # ❌ Remove these
+#       timezone: "America/New_York" # ❌ Remove these
+#       action: "remove"            # ✅ Keep only this
+
+# ===================================================================
+# What the fix does:
+# ===================================================================
+# 1. Now accepts "no schedules found" as success (not an error)
+# 2. Only raises error if result contains "error"
+# 3. Logs warning for unknown results but doesn't fail
+# ===================================================================

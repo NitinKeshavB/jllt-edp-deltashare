@@ -9,40 +9,33 @@ Implements selective update functionality:
 - Rolls back on failure
 """
 
-from typing import Any, Dict, List
-from uuid import UUID, uuid4
+from typing import Any
+from typing import Dict
+from typing import List
+from uuid import UUID
+from uuid import uuid4
 
 from loguru import logger
 
+from dbrx_api.dltshr.recipient import add_recipient_ip
+from dbrx_api.dltshr.recipient import get_recipients
+from dbrx_api.dltshr.recipient import revoke_recipient_ip
+from dbrx_api.dltshr.recipient import update_recipient_description
+from dbrx_api.dltshr.share import add_data_object_to_share
+from dbrx_api.dltshr.share import add_recipients_to_share
+from dbrx_api.dltshr.share import get_shares
+from dbrx_api.jobs.dbrx_pipelines import create_pipeline
+from dbrx_api.jobs.dbrx_pipelines import list_pipelines_with_search_criteria
+from dbrx_api.jobs.dbrx_pipelines import update_pipeline_target_configuration
+from dbrx_api.jobs.dbrx_schedule import create_schedule_for_pipeline
+from dbrx_api.jobs.dbrx_schedule import list_schedules
+from dbrx_api.jobs.dbrx_schedule import update_schedule_for_pipeline
+from dbrx_api.jobs.dbrx_schedule import update_timezone_for_schedule
+from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
 from dbrx_api.workflow.db.repository_recipient import RecipientRepository
 from dbrx_api.workflow.db.repository_share import ShareRepository
-from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
-
-from dbrx_api.dltshr.recipient import (
-    get_recipients,
-    update_recipient_description,
-    add_recipient_ip,
-    revoke_recipient_ip,
-    create_recipient_d2d,
-    create_recipient_d2o,
-)
-from dbrx_api.dltshr.share import (
-    get_shares,
-    add_data_object_to_share,
-    add_recipients_to_share,
-    create_share,
-)
-from dbrx_api.jobs.dbrx_pipelines import (
-    list_pipelines_with_search_criteria,
-    update_pipeline_target_configuration,
-    create_pipeline,
-)
-from dbrx_api.jobs.dbrx_schedule import (
-    list_schedules,
-    update_schedule_for_pipeline,
-    update_timezone_for_schedule,
-    create_schedule_for_pipeline,
-)
+from dbrx_api.workflow.orchestrator.provisioning import validate_metadata
+from dbrx_api.workflow.orchestrator.provisioning import validate_sharepack_config
 from dbrx_api.workflow.orchestrator.status_tracker import StatusTracker
 
 
@@ -104,13 +97,16 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
         logger.info(f"Starting UPDATE strategy provisioning for {share_pack_id}")
         logger.info(f"Target workspace: {workspace_url}")
 
+        # Validate metadata before proceeding
+        await tracker.update("Step 0/7: Validating metadata and configuration")
+        validate_metadata(config["metadata"])
+        validate_sharepack_config(config)
+
         # Detect which sections are present
         has_recipients = "recipient" in config and config["recipient"]
         has_shares = "share" in config and config["share"]
 
-        logger.info(
-            f"Update scope: recipients={has_recipients}, shares={has_shares}"
-        )
+        logger.info(f"Update scope: recipients={has_recipients}, shares={has_shares}")
 
         # Step 1: Initialize
         await tracker.update("Step 1/7: Initializing update")
@@ -125,6 +121,7 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
                 recipient_repo,
                 share_pack_id,
                 created_db_records,
+                configurator=config["metadata"]["configurator"],
             )
         else:
             logger.info("No recipients section - skipping recipient updates")
@@ -148,18 +145,14 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
         # Step 4: Update Share Data Objects (if shares present)
         if has_shares:
             await tracker.update("Step 4/7: Updating share data objects")
-            await _update_share_data_objects(
-                workspace_url, config["share"], updated_resources
-            )
+            await _update_share_data_objects(workspace_url, config["share"], updated_resources)
         else:
             await tracker.update("Step 4/7: Skipping data objects (not in config)")
 
         # Step 5: Update Share Permissions (if shares present)
         if has_shares:
             await tracker.update("Step 5/7: Updating share permissions")
-            await _update_share_permissions(
-                workspace_url, config["share"], updated_resources
-            )
+            await _update_share_permissions(workspace_url, config["share"], updated_resources)
         else:
             await tracker.update("Step 5/7: Skipping permissions (not in config)")
 
@@ -252,8 +245,13 @@ async def _update_recipients(
     recipient_repo: RecipientRepository,
     share_pack_id: UUID,
     created_db_records: Dict,
+    configurator: str,
 ):
-    """Update recipient configurations and track in database."""
+    """Update recipient configurations and track in database.
+
+    Args:
+        configurator: Point of contact from metadata.configurator
+    """
     for recip_config in recipients:
         recipient_name = recip_config["name"]
         recipient_type = recip_config["type"]
@@ -265,89 +263,109 @@ async def _update_recipients(
             existing = get_recipients(recipient_name, workspace_url)
 
             if not existing:
-                logger.info(f"Recipient {recipient_name} not found - creating new recipient")
-                # Create new recipient based on type
-                if recipient_type == "D2D":
-                    metastore_id = recip_config.get("data_recipient_global_metastore_id")
-                    if not metastore_id:
-                        logger.error(f"Missing data_recipient_global_metastore_id for D2D recipient {recipient_name}")
-                        continue
-                    result = create_recipient_d2d(
-                        dltshr_workspace_url=workspace_url,
-                        recipient_name=recipient_name,
-                        recipient_identifier=metastore_id,
-                        description=recip_config.get("description") or recip_config.get("comment", ""),
-                    )
-                else:  # D2O
-                    result = create_recipient_d2o(
-                        dltshr_workspace_url=workspace_url,
-                        recipient_name=recipient_name,
-                        description=recip_config.get("description") or recip_config.get("comment", ""),
-                        ip_access_list=recip_config.get("recipient_ips", []),
-                    )
-
-                if isinstance(result, str):
-                    logger.error(f"Failed to create recipient {recipient_name}: {result}")
-                    continue
-                else:
-                    logger.success(f"Created recipient: {recipient_name}")
-                    updated_resources["recipients"].append(f"{recipient_name} (created)")
-
-                    # Get the newly created recipient for further updates
-                    existing = get_recipients(recipient_name, workspace_url)
-                    if not existing:
-                        continue
-
-                    # Track in database
-                    try:
-                        recipient_id = uuid4()
-                        await recipient_repo.create_from_config(
-                            recipient_id=recipient_id,
-                            share_pack_id=share_pack_id,
-                            recipient_name=recipient_name,
-                            databricks_recipient_id=result.name,  # Databricks recipient ID
-                            recipient_contact_email=recip_config.get("recipient_contact_email", ""),
-                            recipient_type=recipient_type,
-                            recipient_databricks_org=recip_config.get("data_recipient_global_metastore_id"),
-                            ip_access_list=recip_config.get("recipient_ips", []),
-                            activation_url=result.activation_url if hasattr(result, "activation_url") else None,
-                            bearer_token=None,  # Don't store tokens in DB
-                            created_by="orchestrator",
-                        )
-                        created_db_records["recipients"].append(recipient_id)
-                        logger.debug(f"Tracked recipient {recipient_name} in database (id: {recipient_id})")
-                    except Exception as db_error:
-                        logger.warning(f"Failed to track recipient {recipient_name} in database (UPDATE strategy - object should exist): {db_error}")
-
-            # Update description if changed (support both 'description' and 'comment' for backward compatibility)
-            new_description = recip_config.get("description") or recip_config.get("comment", "")
-            if new_description and new_description != existing.comment:
-                result = update_recipient_description(
-                    recipient_name, new_description, workspace_url
+                # UPDATE strategy should only update existing resources, not create new ones
+                error_msg = (
+                    f"Recipient '{recipient_name}' does not exist in Databricks. "
+                    f"UPDATE strategy can only modify existing recipients. "
+                    f"Use NEW strategy to create recipients, or remove this recipient from the YAML."
                 )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            # Recipient exists, proceed with updates
+            logger.info(f"Found existing recipient: {recipient_name}")
+
+            # Update description if changed
+            new_description = recip_config.get("description", "")
+            if new_description and new_description != existing.comment:
+                result = update_recipient_description(recipient_name, new_description, workspace_url)
                 if not isinstance(result, str) or "success" in result.lower():
-                    logger.success(
-                        f"Updated description for recipient: {recipient_name}"
+                    logger.success(f"Updated description for recipient: {recipient_name}")
+                    updated_resources["recipients"].append(f"{recipient_name} (description)")
+
+            # Update token expiry/rotation for D2O recipients (UPDATE strategy)
+            if recipient_type == "D2O" and ("token_expiry" in recip_config or "token_rotation" in recip_config):
+                token_expiry_days = recip_config.get("token_expiry", 0)
+                token_rotation = recip_config.get("token_rotation", False)
+
+                # Case 4: token_expiry = 0 AND token_rotation = true
+                # Expire immediately using rotate_recipient_token(expire_in_seconds=0)
+                if token_expiry_days == 0 and token_rotation:
+                    logger.info(f"Rotating token for {recipient_name} - old token expires immediately")
+                    from dbrx_api.dltshr.recipient import rotate_recipient_token
+
+                    result = rotate_recipient_token(
+                        recipient_name=recipient_name,
+                        dltshr_workspace_url=workspace_url,
+                        expire_in_seconds=0,  # Old token expires immediately
                     )
-                    updated_resources["recipients"].append(
-                        f"{recipient_name} (description)"
+
+                    if isinstance(result, str):
+                        logger.warning(f"Failed to rotate token for {recipient_name}: {result}")
+                    else:
+                        logger.success(f"Rotated token for {recipient_name} - old token expired immediately")
+                        updated_resources["recipients"].append(f"{recipient_name} (token_rotated)")
+
+                # Case 5: token_expiry > 0 AND token_rotation = true
+                # Convert days to seconds, rotate with grace period
+                elif token_expiry_days > 0 and token_rotation:
+                    logger.info(f"Rotating token for {recipient_name} - old token expires in {token_expiry_days} days")
+                    from dbrx_api.dltshr.recipient import rotate_recipient_token
+
+                    expire_in_seconds = token_expiry_days * 24 * 60 * 60  # Convert days to seconds
+                    result = rotate_recipient_token(
+                        recipient_name=recipient_name,
+                        dltshr_workspace_url=workspace_url,
+                        expire_in_seconds=expire_in_seconds,
                     )
+
+                    if isinstance(result, str):
+                        logger.warning(f"Failed to rotate token for {recipient_name}: {result}")
+                    else:
+                        logger.success(
+                            f"Rotated token for {recipient_name} - old token expires in {token_expiry_days} days"
+                        )
+                        updated_resources["recipients"].append(f"{recipient_name} (token_rotated)")
+
+                # Case 7: token_expiry > 0 AND token_rotation = false
+                # Update recipient expiration time
+                elif token_expiry_days > 0 and not token_rotation:
+                    logger.info(f"Updating token expiration for {recipient_name} to {token_expiry_days} days")
+                    from dbrx_api.dltshr.recipient import update_recipient_expiration_time
+
+                    result = update_recipient_expiration_time(
+                        recipient_name=recipient_name,
+                        expiration_time=token_expiry_days,
+                        dltshr_workspace_url=workspace_url,
+                    )
+
+                    if isinstance(result, str) and "error" in result.lower():
+                        logger.warning(f"Failed to update token expiry for {recipient_name}: {result}")
+                    else:
+                        logger.success(f"Updated token expiry to {token_expiry_days} days for {recipient_name}")
+                        updated_resources["recipients"].append(f"{recipient_name} (token_expiry)")
+
+                # Case 6: token_expiry optional AND token_rotation optional
+                # Don't update anything
+                else:
+                    logger.debug(f"No token updates requested for {recipient_name}")
 
             # Update IP access list for D2O recipients
             # Supports TWO approaches:
             # 1. Declarative: recipient_ips (complete list of desired IPs)
             # 2. Explicit: recipient_ips_to_add + recipient_ips_to_remove (incremental changes)
             if recipient_type == "D2O":
-                has_declarative = "recipient_ips" in recip_config
-                has_explicit_add = "recipient_ips_to_add" in recip_config
-                has_explicit_remove = "recipient_ips_to_remove" in recip_config
+                has_declarative = "recipient_ips" in recip_config and recip_config.get("recipient_ips")
+                has_explicit_add = "recipient_ips_to_add" in recip_config and recip_config.get("recipient_ips_to_add")
+                has_explicit_remove = "recipient_ips_to_remove" in recip_config and recip_config.get(
+                    "recipient_ips_to_remove"
+                )
 
                 if has_declarative or has_explicit_add or has_explicit_remove:
                     # Get current IPs from Databricks
                     current_ips_in_databricks = (
                         set(existing.ip_access_list.allowed_ip_addresses)
-                        if existing.ip_access_list
-                        and existing.ip_access_list.allowed_ip_addresses
+                        if existing.ip_access_list and existing.ip_access_list.allowed_ip_addresses
                         else set()
                     )
                     logger.debug(f"Current IPs in Databricks for {recipient_name}: {current_ips_in_databricks}")
@@ -397,9 +415,7 @@ async def _update_recipients(
                     # Execute IP additions
                     if ips_to_add:
                         logger.info(f"Adding {len(ips_to_add)} IP(s) to {recipient_name}: {ips_to_add}")
-                        result = add_recipient_ip(
-                            recipient_name, ips_to_add, workspace_url
-                        )
+                        result = add_recipient_ip(recipient_name, ips_to_add, workspace_url)
                         if not isinstance(result, str) or "success" in result.lower():
                             logger.success(f"Successfully added {len(ips_to_add)} IP(s) to {recipient_name}")
                             updated_resources["recipients"].append(f"{recipient_name} (added IPs)")
@@ -409,9 +425,7 @@ async def _update_recipients(
                     # Execute IP removals
                     if ips_to_remove:
                         logger.info(f"Removing {len(ips_to_remove)} IP(s) from {recipient_name}: {ips_to_remove}")
-                        result = revoke_recipient_ip(
-                            recipient_name, ips_to_remove, workspace_url
-                        )
+                        result = revoke_recipient_ip(recipient_name, ips_to_remove, workspace_url)
                         if not isinstance(result, str) or "success" in result.lower():
                             logger.success(f"Successfully removed {len(ips_to_remove)} IP(s) from {recipient_name}")
                             updated_resources["recipients"].append(f"{recipient_name} (removed IPs)")
@@ -424,7 +438,7 @@ async def _update_recipients(
 
         except Exception as e:
             logger.error(f"Failed to update recipient {recipient_name}: {e}")
-            # Continue with other recipients
+            raise  # Re-raise exception to fail the entire provisioning process
 
 
 async def _update_shares(
@@ -446,51 +460,25 @@ async def _update_shares(
             existing = get_shares(share_name, workspace_url)
 
             if not existing:
-                logger.info(f"Share {share_name} not found - creating new share")
-                # Create new share
-                result = create_share(
-                    dltshr_workspace_url=workspace_url,
-                    share_name=share_name,
-                    description=share_config.get("description") or share_config.get("comment", ""),
+                # UPDATE strategy should only update existing resources, not create new ones
+                error_msg = (
+                    f"Share '{share_name}' does not exist in Databricks. "
+                    f"UPDATE strategy can only modify existing shares. "
+                    f"Use NEW strategy to create shares, or remove this share from the YAML."
                 )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
-                if isinstance(result, str):
-                    logger.error(f"Failed to create share {share_name}: {result}")
-                    continue
-                else:
-                    logger.success(f"Created share: {share_name}")
-                    updated_resources["shares"].append(f"{share_name} (created)")
-
-                    # Track in database
-                    try:
-                        share_id = uuid4()
-                        await share_repo.create_from_config(
-                            share_id=share_id,
-                            share_pack_id=share_pack_id,
-                            share_name=share_name,
-                            databricks_share_id=result.name,
-                            description=share_config.get("description") or share_config.get("comment", ""),
-                            storage_root="",
-                            share_assets=share_config.get("share_assets", []),
-                            recipients_attached=share_config.get("recipients", []),
-                            created_by="orchestrator",
-                        )
-                        created_db_records["shares"].append(share_id)
-                        logger.debug(f"Tracked share {share_name} in database (id: {share_id})")
-                    except Exception as db_error:
-                        logger.warning(f"Failed to track share {share_name} in database (UPDATE strategy - object should exist): {db_error}")
-            else:
-                # Share exists - nothing to update on the share itself
-                # Main updates are data objects and permissions (handled separately)
-                logger.debug(f"Share {share_name} exists")
+            # Share exists, proceed with updates
+            # Main updates are data objects and permissions (handled separately)
+            logger.info(f"Found existing share: {share_name}")
 
         except Exception as e:
             logger.error(f"Failed to check share {share_name}: {e}")
+            raise  # Re-raise exception to fail the entire provisioning process
 
 
-async def _update_share_data_objects(
-    workspace_url: str, shares: List[Dict], updated_resources: Dict
-):
+async def _update_share_data_objects(workspace_url: str, shares: List[Dict], updated_resources: Dict):
     """Update data objects in shares."""
     for share_config in shares:
         share_name = share_config["name"]
@@ -538,11 +526,10 @@ async def _update_share_data_objects(
 
         except Exception as e:
             logger.error(f"Failed to update data objects for {share_name}: {e}")
+            raise  # Re-raise exception to fail the entire provisioning process
 
 
-async def _update_share_permissions(
-    workspace_url: str, shares: List[Dict], updated_resources: Dict
-):
+async def _update_share_permissions(workspace_url: str, shares: List[Dict], updated_resources: Dict):
     """Update recipient permissions on shares."""
     for share_config in shares:
         share_name = share_config["name"]
@@ -565,25 +552,18 @@ async def _update_share_permissions(
 
                 if isinstance(result, str):
                     if "already" in result.lower() or "duplicate" in result.lower():
-                        logger.debug(
-                            f"Recipient {recipient_name} already has access to {share_name}"
-                        )
+                        logger.debug(f"Recipient {recipient_name} already has access to {share_name}")
                     else:
-                        logger.error(
-                            f"Failed to attach {recipient_name} to {share_name}: {result}"
-                        )
+                        error_msg = f"Failed to attach recipient '{recipient_name}' to share '{share_name}': {result}"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg)
                 else:
-                    logger.success(
-                        f"Updated permission: {recipient_name} → {share_name}"
-                    )
-                    updated_resources["permissions"].append(
-                        f"{recipient_name} → {share_name}"
-                    )
+                    logger.success(f"Updated permission: {recipient_name} → {share_name}")
+                    updated_resources["permissions"].append(f"{recipient_name} → {share_name}")
 
             except Exception as e:
-                logger.error(
-                    f"Failed to update permission {recipient_name} → {share_name}: {e}"
-                )
+                logger.error(f"Failed to update permission {recipient_name} → {share_name}: {e}")
+                raise  # Re-raise exception to fail the entire provisioning process
 
 
 async def _update_pipelines_and_schedules(
@@ -623,23 +603,16 @@ async def _update_pipelines_and_schedules(
                         break
 
                 if not pipeline_id:
-                    logger.info(f"Pipeline {pipeline_name} not found - creating new pipeline")
-                    # Create new pipeline
-                    pipeline_id = await _create_pipeline(
-                        workspace_url,
-                        pipeline_name,
-                        pipeline_config,
-                        share_config,
-                        updated_resources,
-                        pipeline_repo,
-                        share_repo,
-                        share_pack_id,
-                        created_db_records,
+                    # UPDATE strategy should NOT create new pipelines - only update existing ones
+                    error_msg = (
+                        f"Pipeline '{pipeline_name}' does not exist in Databricks. "
+                        f"UPDATE strategy can only modify existing pipelines. "
+                        f"Use NEW strategy to create pipelines, or remove this pipeline from the YAML."
                     )
-                    if not pipeline_id:
-                        continue
-                else:
-                    logger.info(f"Found pipeline: {pipeline_name} (id: {pipeline_id})")
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
+                logger.info(f"Found existing pipeline: {pipeline_name} (id: {pipeline_id})")
 
                 # Update pipeline configuration if needed
                 await _update_pipeline_configuration(
@@ -666,6 +639,7 @@ async def _update_pipelines_and_schedules(
 
             except Exception as e:
                 logger.error(f"Failed to update pipeline {pipeline_name}: {e}")
+                raise  # Re-raise exception to fail the entire provisioning process
 
 
 async def _create_pipeline(
@@ -686,8 +660,9 @@ async def _create_pipeline(
         target_asset = pipeline_config.get("target_asset")
 
         if not source_asset:
-            logger.error(f"Missing source_asset for pipeline {pipeline_name}")
-            return None
+            error_msg = f"Missing source_asset for pipeline {pipeline_name}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         # Default target_asset to source table name if not specified
         if not target_asset:
@@ -699,8 +674,9 @@ async def _create_pipeline(
         ext_schema = pipeline_config.get("ext_schema_name") or delta_share.get("ext_schema_name")
 
         if not ext_catalog or not ext_schema:
-            logger.error(f"Missing catalog/schema for pipeline {pipeline_name}")
-            return None
+            error_msg = f"Missing ext_catalog_name or ext_schema_name for pipeline {pipeline_name}. Provide in pipeline config or share delta_share section."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         # Build configuration
         configuration = {
@@ -728,8 +704,9 @@ async def _create_pipeline(
         )
 
         if isinstance(result, str):
-            logger.error(f"Failed to create pipeline {pipeline_name}: {result}")
-            return None
+            error_msg = f"Failed to create pipeline {pipeline_name}: {result}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
         logger.success(f"Created pipeline: {pipeline_name}")
         updated_resources["pipelines"].append(f"{pipeline_name} (created)")
@@ -784,14 +761,16 @@ async def _create_pipeline(
                 created_db_records["pipelines"].append(pipeline_id_db)
                 logger.debug(f"Tracked pipeline {pipeline_name} in database (id: {pipeline_id_db})")
         except Exception as db_error:
-            logger.warning(f"Failed to track pipeline {pipeline_name} in database (UPDATE strategy - object should exist): {db_error}")
+            logger.warning(
+                f"Failed to track pipeline {pipeline_name} in database (UPDATE strategy - object should exist): {db_error}"
+            )
 
         # Return Databricks pipeline_id
         return result.pipeline_id
 
     except Exception as e:
         logger.error(f"Failed to create pipeline {pipeline_name}: {e}")
-        return None
+        raise  # Re-raise exception to fail the entire provisioning process
 
 
 async def _update_pipeline_configuration(
@@ -802,62 +781,166 @@ async def _update_pipeline_configuration(
     share_config: Dict,
     updated_resources: Dict,
 ):
-    """Update pipeline configuration (target table, source, catalog, schema, etc.)."""
+    """
+    Update pipeline configuration - ONLY mutable fields.
+
+    Immutable fields (will raise error if changed):
+    - source_asset (source table)
+    - scd_type
+
+    Mutable fields (can be updated):
+    - target_asset (target table name)
+    - key_columns (validated against source table schema)
+    - notifications
+    - serverless
+    - tags
+    """
     try:
-        # Extract configuration values
-        source_asset = pipeline_config.get("source_asset")
-        target_asset = pipeline_config.get("target_asset")
-
-        if not source_asset and not target_asset:
-            logger.debug(f"No source/target assets specified for {pipeline_name}, skipping config update")
-            return
-
-        # Default target_asset to source table name if not specified
-        if not target_asset and source_asset:
-            target_asset = source_asset.split(".")[-1]
-
-        # Get catalog and schema (pipeline-level overrides or share-level defaults)
-        delta_share = share_config.get("delta_share", {})
-        ext_catalog = pipeline_config.get("ext_catalog_name") or delta_share.get("ext_catalog_name")
-        ext_schema = pipeline_config.get("ext_schema_name") or delta_share.get("ext_schema_name")
-
-        # Build configuration dictionary
-        configuration = {
-            "pipelines.target_table": target_asset,
-            "pipelines.target_catalog": ext_catalog,
-            "pipelines.target_schema": ext_schema,
-        }
-
-        # Add source_asset if present
-        if source_asset:
-            configuration["pipelines.source_table"] = source_asset
-
-        # Add optional fields if present
-        if "key_columns" in pipeline_config:
-            configuration["pipelines.keys"] = pipeline_config["key_columns"]
-
-        if "scd_type" in pipeline_config:
-            configuration["pipelines.scd_type"] = pipeline_config["scd_type"]
-
-        if "apply_changes" in pipeline_config:
-            configuration["pipelines.apply_changes"] = str(pipeline_config["apply_changes"]).lower()
-
-        logger.info(f"Updating pipeline configuration for {pipeline_name}")
-        logger.debug(f"New configuration: {configuration}")
-
-        # Get existing pipeline details to retrieve libraries (required by Databricks)
+        # Get existing pipeline details
         from dbrx_api.jobs.dbrx_pipelines import get_pipeline_by_name
+        from dbrx_api.jobs.dbrx_pipelines import validate_pipeline_keys
+
         existing_pipeline = get_pipeline_by_name(workspace_url, pipeline_name)
 
         if isinstance(existing_pipeline, str):
-            logger.error(f"Failed to get existing pipeline {pipeline_name}: {existing_pipeline}")
-            return
+            error_msg = f"Failed to get existing pipeline {pipeline_name}: {existing_pipeline}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
-        # Extract libraries from existing pipeline
+        if not existing_pipeline or not existing_pipeline.spec:
+            error_msg = f"Pipeline {pipeline_name} exists but has no spec"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        # Extract existing configuration
+        existing_config = dict(existing_pipeline.spec.configuration) if existing_pipeline.spec.configuration else {}
+        existing_source = existing_config.get("pipelines.source_table")
+        existing_scd_type = existing_config.get("pipelines.scd_type")
+        existing_keys = existing_config.get("pipelines.keys")
+
+        logger.info(
+            f"Existing pipeline config: source={existing_source}, scd_type={existing_scd_type}, keys={existing_keys}"
+        )
+
+        # Extract new configuration values
+        new_source = pipeline_config.get("source_asset")
+        new_target = pipeline_config.get("target_asset")
+        new_scd_type = pipeline_config.get("scd_type")
+        new_keys = pipeline_config.get("key_columns")
+
+        # VALIDATION 1: Prevent source_asset changes (immutable)
+        if new_source and existing_source and new_source != existing_source:
+            error_msg = (
+                f"Cannot change source_asset for existing pipeline '{pipeline_name}'. "
+                f"Existing: '{existing_source}', Requested: '{new_source}'. "
+                f"Source asset is immutable - delete and recreate the pipeline if you need to change it."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # VALIDATION 2: Prevent scd_type changes (immutable)
+        if new_scd_type and existing_scd_type and new_scd_type != existing_scd_type:
+            error_msg = (
+                f"Cannot change scd_type for existing pipeline '{pipeline_name}'. "
+                f"Existing: '{existing_scd_type}', Requested: '{new_scd_type}'. "
+                f"SCD type is immutable - delete and recreate the pipeline if you need to change it."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # VALIDATION 3: Validate key_columns if changed
+        if new_keys and existing_keys and new_keys != existing_keys:
+            logger.info(
+                f"Key columns changed for {pipeline_name}: '{existing_keys}' → '{new_keys}', validating against source table"
+            )
+
+            # Use existing source (since we can't change it)
+            source_table = existing_source or new_source
+
+            if not source_table:
+                error_msg = f"Cannot validate key_columns for {pipeline_name} - no source_asset found"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            # Get workspace client for validation
+            from datetime import datetime
+            from datetime import timezone
+
+            from databricks.sdk import WorkspaceClient
+
+            from dbrx_api.dbrx_auth.token_gen import get_auth_token
+
+            session_token = get_auth_token(datetime.now(timezone.utc))[0]
+            w_client = WorkspaceClient(host=workspace_url, token=session_token)
+
+            # Validate keys against source table schema
+            keys_validation = validate_pipeline_keys(
+                w_client=w_client,
+                source_table=source_table,
+                keys=new_keys,
+            )
+
+            if not keys_validation["success"]:
+                error_msg = (
+                    f"Invalid key_columns for pipeline '{pipeline_name}': {keys_validation['message']}. "
+                    f"Invalid keys: {keys_validation['invalid_keys']}"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            logger.info(f"Key columns validation passed for {pipeline_name}: {keys_validation['valid_keys']}")
+
+        # Build updated configuration (only mutable fields)
+        configuration = existing_config.copy()  # Start with existing config
+
+        # Update target_table if provided
+        if new_target:
+            configuration["pipelines.target_table"] = new_target
+            logger.info(f"Updating target_table: {new_target}")
+
+        # Update key_columns if provided and validated
+        if new_keys:
+            configuration["pipelines.keys"] = new_keys
+            logger.info(f"Updating key_columns: {new_keys}")
+
+        # Get catalog and schema (pipeline-level overrides or share-level defaults)
+        delta_share = share_config.get("delta_share", {})
+        ext_catalog = (
+            pipeline_config.get("ext_catalog_name")
+            or delta_share.get("ext_catalog_name")
+            or existing_pipeline.spec.catalog
+        )
+        ext_schema = (
+            pipeline_config.get("ext_schema_name")
+            or delta_share.get("ext_schema_name")
+            or existing_pipeline.spec.target
+        )
+
+        logger.info(f"Updating pipeline configuration for {pipeline_name}")
+        logger.debug(f"Updated configuration: {configuration}")
+
+        # Extract libraries from existing pipeline (required by Databricks)
         libraries = existing_pipeline.spec.libraries if existing_pipeline.spec else None
         if not libraries:
-            logger.warning(f"No libraries found in existing pipeline {pipeline_name}, skipping config update")
-            return
+            logger.warning(f"No libraries found in existing pipeline {pipeline_name}")
+
+        # Build notifications list
+        notifications_list = pipeline_config.get("notification", [])
+        notifications = None
+        if notifications_list:
+            from databricks.sdk.service.pipelines import Notifications
+
+            notifications = [
+                Notifications(
+                    email_recipients=notifications_list,
+                    alerts=[
+                        "on-update-failure",
+                        "on-update-fatal-failure",
+                        "on-update-success",
+                        "on-flow-failure",
+                    ],
+                )
+            ]
 
         # Update pipeline configuration
         result = update_pipeline_target_configuration(
@@ -868,23 +951,22 @@ async def _update_pipeline_configuration(
             catalog=ext_catalog,
             target=ext_schema,
             libraries=libraries,
-            notifications=pipeline_config.get("notification"),
+            notifications=notifications,
             tags=pipeline_config.get("tags"),
             serverless=pipeline_config.get("serverless"),
         )
 
         if isinstance(result, str):
-            if "success" in result.lower() or "updated" in result.lower():
-                logger.success(f"Updated configuration for pipeline: {pipeline_name}")
-                updated_resources["pipelines"].append(f"{pipeline_name} (config)")
-            else:
-                logger.warning(f"Failed to update pipeline config for {pipeline_name}: {result}")
+            error_msg = f"Failed to update pipeline config for {pipeline_name}: {result}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         else:
             logger.success(f"Updated configuration for pipeline: {pipeline_name}")
             updated_resources["pipelines"].append(f"{pipeline_name} (config)")
 
     except Exception as e:
         logger.error(f"Failed to update pipeline configuration for {pipeline_name}: {e}")
+        raise  # Re-raise exception to fail the entire provisioning process
 
 
 async def _update_pipeline_schedule(
@@ -894,32 +976,72 @@ async def _update_pipeline_schedule(
     pipeline_config: Dict,
     updated_resources: Dict,
 ):
-    """Update schedule for a specific pipeline."""
+    """
+    Update, add, or remove schedule for a pipeline.
+
+    Supports three operations:
+    1. **Remove**: schedule = {"action": "remove"} - Deletes all schedules for the pipeline
+    2. **Add**: schedule = {"cron": "...", "timezone": "..."} - Creates new schedule (if none exists)
+    3. **Update**: schedule = {"cron": "...", "timezone": "..."} - Updates existing schedule (if exists)
+
+    Examples:
+        # Remove schedule
+        schedule:
+          action: "remove"
+
+        # Add or update schedule
+        schedule:
+          cron: "0 0 0 * * ?"
+          timezone: "UTC"
+    """
     schedule = pipeline_config.get("schedule")
 
     if not schedule:
+        logger.debug(f"No schedule config for {pipeline_name}, skipping schedule management")
         return
 
-    # Get existing schedules for this pipeline
     try:
+        # Get existing schedules for this pipeline
         schedules, _ = list_schedules(
             dltshr_workspace_url=workspace_url,
             pipeline_id=pipeline_id,
         )
 
-        if not schedules:
-            # No schedule exists - create one
-            logger.info(f"No schedule found for {pipeline_name}, creating new one")
-            await _create_schedule(
-                workspace_url, pipeline_name, pipeline_id, schedule, pipeline_config
+        # Check if action is "remove"
+        if isinstance(schedule, dict) and schedule.get("action") == "remove":
+            if not schedules:
+                logger.info(f"No schedules to remove for {pipeline_name}")
+                return
+
+            # Remove all schedules for this pipeline
+            logger.info(f"Removing all schedules for {pipeline_name} ({len(schedules)} schedule(s))")
+            from dbrx_api.jobs.dbrx_schedule import delete_schedule_for_pipeline
+
+            result = delete_schedule_for_pipeline(
+                dltshr_workspace_url=workspace_url,
+                pipeline_id=pipeline_id,
             )
-            updated_resources["schedules"].append(f"{pipeline_name} (created)")
+
+            # Check for success messages (deleted, successfully) or "no schedules found" (benign)
+            if (
+                "deleted" in result.lower()
+                or "successfully" in result.lower()
+                or "no schedules found" in result.lower()
+            ):
+                logger.success(f"Removed schedules for {pipeline_name}: {result}")
+                updated_resources["schedules"].append(f"{pipeline_name} (removed)")
+            elif "error" in result.lower():
+                # Only raise if it's an actual error, not "no schedules found"
+                error_msg = f"Failed to remove schedules for {pipeline_name}: {result}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            else:
+                # Unknown result - log and continue (don't fail)
+                logger.warning(f"Schedule removal result for {pipeline_name}: {result}")
+                updated_resources["schedules"].append(f"{pipeline_name} (removal attempted)")
             return
 
-        # Update existing schedule
-        job_id = schedules[0]["job_id"]
-        existing_cron = schedules[0].get("cron_schedule", {})
-
+        # Extract cron and timezone from schedule config
         if isinstance(schedule, dict):
             # Handle both v1.0 and v2.0 schedule formats
             new_cron = schedule.get("cron")
@@ -927,7 +1049,7 @@ async def _update_pipeline_schedule(
 
             # v1.0 format: schedule has source_asset as key with nested cron/timezone
             if not new_cron:
-                schedule_keys = [k for k in schedule.keys() if k not in ["cron", "timezone"]]
+                schedule_keys = [k for k in schedule.keys() if k not in ["cron", "timezone", "action"]]
                 if len(schedule_keys) == 1:
                     source_asset_key = schedule_keys[0]
                     nested_schedule = schedule[source_asset_key]
@@ -935,39 +1057,81 @@ async def _update_pipeline_schedule(
                         new_cron = nested_schedule.get("cron")
                         new_timezone = nested_schedule.get("timezone", "UTC")
                         logger.info(f"[v1.0 FORMAT] Extracted cron from nested schedule for {pipeline_name}")
+                    elif isinstance(nested_schedule, str) and nested_schedule.lower() == "continuous":
+                        logger.warning(f"[v1.0 FORMAT] Continuous schedule not yet supported for {pipeline_name}")
+                        return
 
-            # Check if cron changed
-            if new_cron and existing_cron.get("cron_expression") != new_cron:
+            if not new_cron:
+                logger.warning(f"No cron expression found in schedule config for {pipeline_name}, skipping")
+                return
+
+            # Case 1: No existing schedules - CREATE new schedule
+            if not schedules:
+                logger.info(f"No schedule found for {pipeline_name}, creating new one")
+                await _create_schedule(workspace_url, pipeline_name, pipeline_id, schedule, pipeline_config)
+                updated_resources["schedules"].append(f"{pipeline_name} (created)")
+                return
+
+            # Case 2: Existing schedule(s) - UPDATE existing schedule
+            job_id = schedules[0]["job_id"]
+            job_name = schedules[0]["job_name"]
+            existing_cron = schedules[0].get("cron_schedule", {})
+
+            logger.info(f"Found existing schedule for {pipeline_name} (job: {job_name}), checking for updates")
+
+            # Check if cron expression changed
+            cron_changed = existing_cron.get("cron_expression") != new_cron
+            timezone_changed = existing_cron.get("timezone") != new_timezone
+
+            if cron_changed:
+                logger.info(
+                    f"Updating cron for {pipeline_name}: '{existing_cron.get('cron_expression')}' → '{new_cron}'"
+                )
                 result = update_schedule_for_pipeline(
                     dltshr_workspace_url=workspace_url,
                     job_id=job_id,
                     cron_expression=new_cron,
                 )
-                if "success" in result.lower():
-                    logger.success(
-                        f"Updated cron for {pipeline_name}: {new_cron}"
-                    )
-                    updated_resources["schedules"].append(
-                        f"{pipeline_name} (cron)"
-                    )
+                if isinstance(result, str) and "success" in result.lower():
+                    logger.success(f"Updated cron for {pipeline_name}: {new_cron}")
+                    updated_resources["schedules"].append(f"{pipeline_name} (cron updated)")
+                elif isinstance(result, str):
+                    error_msg = f"Failed to update cron for {pipeline_name}: {result}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                else:
+                    logger.success(f"Updated cron for {pipeline_name}: {new_cron}")
+                    updated_resources["schedules"].append(f"{pipeline_name} (cron updated)")
 
-            # Check if timezone changed
-            if existing_cron.get("timezone") != new_timezone:
+            if timezone_changed:
+                logger.info(
+                    f"Updating timezone for {pipeline_name}: '{existing_cron.get('timezone')}' → '{new_timezone}'"
+                )
                 result = update_timezone_for_schedule(
                     dltshr_workspace_url=workspace_url,
                     job_id=job_id,
                     time_zone=new_timezone,
                 )
-                if "success" in result.lower():
-                    logger.success(
-                        f"Updated timezone for {pipeline_name}: {new_timezone}"
-                    )
-                    updated_resources["schedules"].append(
-                        f"{pipeline_name} (timezone)"
-                    )
+                if isinstance(result, str) and "success" in result.lower():
+                    logger.success(f"Updated timezone for {pipeline_name}: {new_timezone}")
+                    updated_resources["schedules"].append(f"{pipeline_name} (timezone updated)")
+                elif isinstance(result, str):
+                    error_msg = f"Failed to update timezone for {pipeline_name}: {result}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                else:
+                    logger.success(f"Updated timezone for {pipeline_name}: {new_timezone}")
+                    updated_resources["schedules"].append(f"{pipeline_name} (timezone updated)")
+
+            if not cron_changed and not timezone_changed:
+                logger.info(f"Schedule for {pipeline_name} unchanged (cron: {new_cron}, timezone: {new_timezone})")
+
+        elif isinstance(schedule, str) and schedule.lower() == "continuous":
+            logger.warning(f"Continuous schedules not yet supported for {pipeline_name}")
 
     except Exception as e:
         logger.error(f"Failed to update schedule for {pipeline_name}: {e}")
+        raise  # Re-raise exception to fail the entire provisioning process
 
 
 async def _create_schedule(
@@ -978,12 +1142,12 @@ async def _create_schedule(
     pipeline_config: Dict,
 ):
     """Create a new schedule for a pipeline."""
-    logger.info(f"Attempting to create schedule for {pipeline_name}, schedule type: {type(schedule)}, value: {schedule}")
+    logger.info(
+        f"Attempting to create schedule for {pipeline_name}, schedule type: {type(schedule)}, value: {schedule}"
+    )
 
     if isinstance(schedule, str) and schedule.lower() == "continuous":
-        logger.warning(
-            f"Continuous schedules not yet supported for {pipeline_name}"
-        )
+        logger.warning(f"Continuous schedules not yet supported for {pipeline_name}")
         return
 
     if isinstance(schedule, dict):
@@ -1033,13 +1197,17 @@ async def _create_schedule(
                         if schedules_verify:
                             logger.success(f"Schedule for {pipeline_name} exists and is active (job: {job_name})")
                         else:
-                            logger.warning(f"Job {job_name} exists but no active schedule found for pipeline - may need manual cleanup in Databricks Workflows")
+                            logger.warning(
+                                f"Job {job_name} exists but no active schedule found for pipeline - may need manual cleanup in Databricks Workflows"
+                            )
                     except Exception as verify_error:
                         logger.warning(f"Could not verify schedule for {pipeline_name}: {verify_error}")
                 elif "success" in result.lower() or "created" in result.lower():
                     logger.success(f"Created schedule for {pipeline_name} (job: {job_name}, cron: {cron_expression})")
                 else:
-                    logger.error(f"Failed to create schedule for {pipeline_name}: {result}")
+                    error_msg = f"Failed to create schedule for {pipeline_name}: {result}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
             else:
                 # Dict response - success
                 logger.success(f"Created schedule for {pipeline_name} (job: {job_name})")

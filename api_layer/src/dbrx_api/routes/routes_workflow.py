@@ -4,7 +4,6 @@ Workflow API Routes
 REST API endpoints for share pack workflow management.
 """
 
-from datetime import datetime
 from uuid import UUID
 from uuid import uuid4
 
@@ -102,28 +101,65 @@ async def upload_and_validate_sharepack(
         logger.error(f"Strategy detection failed: {e}", exc_info=True)
         validation_warnings = [f"Could not auto-detect strategy: {str(e)}. Using '{user_strategy}' as specified."]
 
-    # 3. Store in database
+    # 3. Store in database (with deduplication)
     from dbrx_api.workflow.db.repository_share_pack import SharePackRepository
 
     db_pool = request.app.state.domain_db_pool
     repo = SharePackRepository(db_pool.pool)
 
-    share_pack_id = uuid4()
-    share_pack_name = f"SharePack_{config.metadata.requestor}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # Generate unique identifier for deduplication
+    # Based on: requestor + business_line + project_name (if available)
+    requestor = config.metadata.requestor
+    business_line = config.metadata.business_line
+    project_name = getattr(config.metadata, "project_name", None) or "default"
+
+    # Create a stable share pack name for deduplication
+    stable_name = f"SharePack_{requestor}_{business_line}_{project_name}".replace(" ", "_")
+
+    # Check if share pack already exists
+    existing_share_pack = await repo.get_by_name(stable_name)
 
     file_format = "yaml" if file.filename.endswith((".yaml", ".yml")) else "xlsx"
 
-    await repo.create_from_config(
-        share_pack_id=share_pack_id,
-        share_pack_name=share_pack_name,
-        requested_by=config.metadata.requestor,
-        strategy=config.metadata.strategy,
-        config=config.dict(),  # Store as JSONB
-        file_format=file_format,
-        original_filename=file.filename,
-    )
+    if existing_share_pack:
+        # Reuse existing share pack ID
+        share_pack_id = existing_share_pack["share_pack_id"]
+        share_pack_name = existing_share_pack["share_pack_name"]
 
-    logger.info(f"Share pack stored in database: {share_pack_id}")
+        logger.info(f"Reusing existing share pack: {share_pack_id} ({share_pack_name})")
+        logger.info("Updating share pack with new configuration...")
+
+        # Update the existing share pack with new config
+        # This creates a new version in the history while maintaining the same share_pack_id
+        await repo.create_from_config(
+            share_pack_id=share_pack_id,
+            share_pack_name=share_pack_name,
+            requested_by=config.metadata.requestor,
+            strategy=config.metadata.strategy,
+            config=config.dict(),  # Store updated config as JSONB
+            file_format=file_format,
+            original_filename=file.filename,
+        )
+
+        logger.info(f"Share pack updated: {share_pack_id}")
+    else:
+        # Create new share pack
+        share_pack_id = uuid4()
+        share_pack_name = stable_name
+
+        logger.info(f"Creating new share pack: {share_pack_id} ({share_pack_name})")
+
+        await repo.create_from_config(
+            share_pack_id=share_pack_id,
+            share_pack_name=share_pack_name,
+            requested_by=config.metadata.requestor,
+            strategy=config.metadata.strategy,
+            config=config.dict(),  # Store as JSONB
+            file_format=file_format,
+            original_filename=file.filename,
+        )
+
+        logger.info(f"Share pack created: {share_pack_id}")
 
     # 4. Enqueue for processing
     queue_client = request.app.state.queue_client

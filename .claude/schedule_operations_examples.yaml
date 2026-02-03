@@ -1,0 +1,293 @@
+# ===================================================================
+# Schedule Operations Examples - UPDATE Strategy
+# ===================================================================
+# Copy the relevant section for your use case
+# ===================================================================
+
+metadata:
+  requestor: john.doe@company.com
+  business_line: "Finance Analytics"
+  project_name: "Q1 2025 Finance Reporting"
+  strategy: UPDATE  # Must be UPDATE for schedule operations
+  delta_share_region: AM
+  configurator: data-engineering@company.com
+  approver: finance-leadership@company.com
+  executive_team: data-governance@company.com
+  approver_status: approved
+  workspace_url: "https://adb-1234567890123456.12.azuredatabricks.net"
+  servicenow: "INC0012345"
+  contact_email: john.doe@company.com
+
+# ===================================================================
+# OPERATION 1: Add NEW Schedule (pipeline has no schedule)
+# ===================================================================
+# Use case: Pipeline exists but has no schedule, now adding one
+# ===================================================================
+
+share:
+  - name: finance_daily_reports  # Must exist in Databricks
+    share_assets:
+      - main_catalog.finance.daily_transactions
+
+    delta_share:
+      ext_catalog_name: analytics_prod
+      ext_schema_name: finance_shared
+
+    pipelines:
+      - name_prefix: finance_transactions_pipeline  # Must exist in Databricks
+        source_asset: main_catalog.finance.daily_transactions  # Must match existing
+        target_asset: daily_transactions_external
+        scd_type: "2"  # Must match existing
+        key_columns: "transaction_id,transaction_date"
+        serverless: true
+
+        # ADD NEW SCHEDULE - Pipeline previously had no schedule
+        schedule:
+          cron: "0 0 2 * * ?"  # Daily at 2 AM
+          timezone: "America/New_York"
+
+# ===================================================================
+# OPERATION 2: REMOVE Existing Schedule
+# ===================================================================
+# Use case: Pipeline has a schedule, now removing it (manual triggering)
+# ===================================================================
+
+# Example 1: Remove schedule only
+share:
+  - name: operations_realtime  # Must exist
+    share_assets:
+      - ops_catalog.metrics.system_health
+
+    delta_share:
+      ext_catalog_name: ops_analytics
+      ext_schema_name: realtime
+
+    pipelines:
+      - name_prefix: ops_health_stream  # Must exist
+        source_asset: ops_catalog.metrics.system_health  # Must match existing
+        target_asset: system_health_stream
+        scd_type: "1"  # Must match existing
+
+        # REMOVE SCHEDULE - Deletes all schedules for this pipeline
+        schedule:
+          action: "remove"
+
+# Example 2: Remove schedule and update other fields
+share:
+  - name: finance_daily_reports
+    pipelines:
+      - name_prefix: finance_revenue_pipeline
+        source_asset: main_catalog.finance.revenue_summary
+        scd_type: "1"
+        target_asset: revenue_v2  # Update target table
+        notification:  # Add new notification
+          - new-team@company.com
+
+        # REMOVE SCHEDULE
+        schedule:
+          action: "remove"
+
+# ===================================================================
+# OPERATION 3: UPDATE Existing Schedule (Change Cron or Timezone)
+# ===================================================================
+# Use case: Pipeline has a schedule, now changing the timing
+# ===================================================================
+
+# Example 1: Change cron expression only
+share:
+  - name: finance_daily_reports
+    pipelines:
+      - name_prefix: finance_transactions_pipeline
+        source_asset: main_catalog.finance.daily_transactions
+        scd_type: "2"
+
+        # UPDATE SCHEDULE - Change from 2 AM to 6 AM
+        schedule:
+          cron: "0 0 6 * * ?"  # Changed from "0 0 2 * * ?"
+          timezone: "America/New_York"  # Same timezone
+
+# Example 2: Change timezone only
+share:
+  - name: operations_realtime
+    pipelines:
+      - name_prefix: ops_error_logs_sync
+        source_asset: ops_catalog.metrics.error_logs
+        scd_type: "1"
+
+        # UPDATE SCHEDULE - Change timezone
+        schedule:
+          cron: "0 */15 * * * ?"  # Same cron (every 15 min)
+          timezone: "UTC"  # Changed from "America/New_York"
+
+# Example 3: Change both cron and timezone
+share:
+  - name: finance_daily_reports
+    pipelines:
+      - name_prefix: finance_customer_metrics
+        source_asset: main_catalog.finance.customer_metrics
+        scd_type: "2"
+
+        # UPDATE SCHEDULE - Change both
+        schedule:
+          cron: "0 0 */12 * * ?"  # Every 12 hours (was daily)
+          timezone: "UTC"  # Changed from "America/Los_Angeles"
+
+# ===================================================================
+# OPERATION 4: Replace Schedule (Remove old, Add new)
+# ===================================================================
+# Use case: Completely different schedule needed
+# Note: This is just updating the schedule, same as Operation 3
+# ===================================================================
+
+share:
+  - name: operations_realtime
+    pipelines:
+      - name_prefix: ops_user_activity_tracking
+        source_asset: ops_catalog.metrics.user_activity
+        scd_type: "2"
+
+        # REPLACE SCHEDULE
+        # Old: Business hours (9-5 Mon-Fri)
+        # New: Every 30 minutes, 24/7
+        schedule:
+          cron: "0 */30 * * * ?"
+          timezone: "UTC"
+
+# ===================================================================
+# MULTIPLE OPERATIONS IN ONE FILE
+# ===================================================================
+# You can combine multiple operations across different pipelines
+# ===================================================================
+
+share:
+  # Share 1: Finance Reports
+  - name: finance_daily_reports
+    share_assets:
+      - main_catalog.finance.daily_transactions
+      - main_catalog.finance.revenue_summary
+      - main_catalog.finance.customer_metrics
+
+    delta_share:
+      ext_catalog_name: analytics_prod
+      ext_schema_name: finance_shared
+
+    pipelines:
+      # Pipeline 1: ADD new schedule
+      - name_prefix: finance_transactions_pipeline
+        source_asset: main_catalog.finance.daily_transactions
+        scd_type: "2"
+        key_columns: "transaction_id,transaction_date"
+        schedule:
+          cron: "0 0 2 * * ?"  # ADD: Daily at 2 AM
+          timezone: "America/New_York"
+
+      # Pipeline 2: UPDATE existing schedule
+      - name_prefix: finance_revenue_pipeline
+        source_asset: main_catalog.finance.revenue_summary
+        scd_type: "1"
+        schedule:
+          cron: "0 0 */6 * * ?"  # UPDATE: Every 6 hours (was every 12)
+          timezone: "UTC"
+
+      # Pipeline 3: REMOVE schedule
+      - name_prefix: finance_customer_metrics
+        source_asset: main_catalog.finance.customer_metrics
+        scd_type: "2"
+        schedule:
+          action: "remove"  # REMOVE: Will be triggered manually
+
+  # Share 2: Operations
+  - name: operations_realtime
+    share_assets:
+      - ops_catalog.metrics.system_health
+
+    delta_share:
+      ext_catalog_name: ops_analytics
+      ext_schema_name: realtime
+
+    pipelines:
+      # Pipeline 4: UPDATE schedule timezone
+      - name_prefix: ops_health_stream
+        source_asset: ops_catalog.metrics.system_health
+        scd_type: "1"
+        schedule:
+          cron: "0 */5 * * * ?"  # Same: every 5 minutes
+          timezone: "America/New_York"  # UPDATE: was UTC
+
+# ===================================================================
+# SCHEDULE CRON EXPRESSIONS - Quick Reference
+# ===================================================================
+# Format: second minute hour day-of-month month day-of-week
+#
+# Common Patterns:
+# ---------------
+# Every 5 minutes:       0 */5 * * * ?
+# Every 15 minutes:      0 */15 * * * ?
+# Every 30 minutes:      0 */30 * * * ?
+# Every hour:            0 0 * * * ?
+# Every 6 hours:         0 0 */6 * * ?
+# Every 12 hours:        0 0 */12 * * ?
+#
+# Daily Patterns:
+# --------------
+# Daily at midnight:     0 0 0 * * ?
+# Daily at 2 AM:         0 0 2 * * ?
+# Daily at 6 AM:         0 0 6 * * ?
+# Daily at noon:         0 0 12 * * ?
+# Daily at 6 PM:         0 0 18 * * ?
+#
+# Business Hours:
+# --------------
+# Weekdays 9-5:          0 0 9-17 * * MON-FRI
+# Monday 9 AM:           0 0 9 ? * MON
+# Weekdays 9 AM:         0 0 9 ? * MON-FRI
+# Weekdays 5 PM:         0 0 17 ? * MON-FRI
+#
+# Monthly:
+# --------
+# First of month:        0 0 0 1 * ?
+# Last day of month:     0 0 0 L * ?
+# 15th of month:         0 0 0 15 * ?
+#
+# ===================================================================
+# TIMEZONES - Common Examples
+# ===================================================================
+# UTC:                   UTC
+# Eastern Time:          America/New_York
+# Central Time:          America/Chicago
+# Pacific Time:          America/Los_Angeles
+# London:                Europe/London
+# Paris:                 Europe/Paris
+# Tokyo:                 Asia/Tokyo
+# Singapore:             Asia/Singapore
+#
+# Full list: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+# ===================================================================
+
+# ===================================================================
+# VALIDATION NOTES
+# ===================================================================
+# 1. Pipeline must exist in Databricks (UPDATE strategy)
+# 2. source_asset and scd_type MUST match existing values (immutable)
+# 3. Schedule operations:
+#    - Add: Pipeline has no schedule → creates new
+#    - Update: Pipeline has schedule → modifies existing
+#    - Remove: schedule.action = "remove" → deletes all schedules
+# 4. Cron must be valid Quartz 6-field format
+# 5. Timezone must be valid IANA timezone
+# ===================================================================
+
+# ===================================================================
+# ERROR SCENARIOS
+# ===================================================================
+# Will FAIL if:
+# - Pipeline doesn't exist (UPDATE strategy)
+# - source_asset changed (immutable)
+# - scd_type changed (immutable)
+# - Invalid cron expression
+# - Invalid timezone
+#
+# Will SUCCEED and retry on timeout:
+# - Databricks API timeout
+# - Network errors
+# ===================================================================

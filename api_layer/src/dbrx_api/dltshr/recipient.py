@@ -178,7 +178,9 @@ def create_recipient_d2o(
             authentication_type=AuthenticationType.TOKEN,
             ip_access_list=ip_access,
         )
-        print(f"DEBUG: Recipient created, comment in response: '{response.comment if hasattr(response, 'comment') else 'N/A'}'")
+        print(
+            f"DEBUG: Recipient created, comment in response: '{response.comment if hasattr(response, 'comment') else 'N/A'}'"
+        )
 
         return response
     except Exception as ex:

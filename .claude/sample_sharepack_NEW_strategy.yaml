@@ -1,0 +1,159 @@
+# ===================================================================
+# SharePack YAML - NEW Strategy (Create New Resources)
+# ===================================================================
+# This example demonstrates the NEW strategy for creating fresh resources
+# ===================================================================
+
+metadata:
+  # ==== REQUIRED FIELDS ====
+  requestor: john.doe@company.com  # Email or AD group name (e.g., "DataTeam-ADGroup")
+  business_line: "Finance Analytics"
+  strategy: NEW  # NEW = Create new resources
+
+  # ==== GOVERNANCE FIELDS (REQUIRED) ====
+  delta_share_region: AM  # AM or EMEA
+  configurator: data-team@company.com  # Email or AD group
+  approver: finance-leadership@company.com  # Email or AD group
+  executive_team: data-governance@company.com  # Email or AD group
+  approver_status: approved  # approved | declined | request_more_info | pending
+  workspace_url: "https://adb-1234567890123456.12.azuredatabricks.net"
+  servicenow: "INC0012345"  # ServiceNow ticket number or link
+
+  # ==== OPTIONAL FIELDS ====
+  project_name: "Q1 2025 Finance Reporting"
+  version: "1.0"
+  contact_email: john.doe@company.com  # REQUIRED if not same as requestor
+  description: "Finance analytics data sharing for Q1 2025"
+
+# ===================================================================
+# RECIPIENTS
+# ===================================================================
+recipient:
+  # D2O Recipient (Databricks-to-Open) - Uses TOKEN authentication
+  - name: external_partner_d2o
+    type: D2O
+    recipient: partner@external-company.com
+    recipient_ips_to_add:  # IP allowlist (optional for D2O)
+      - 203.0.113.0/24
+      - 198.51.100.50
+    token_expiry: 90  # Days (optional, default: 90)
+    token_rotation: false  # Optional, default: false
+    comment: "External analytics partner"
+
+  # D2D Recipient (Databricks-to-Databricks) - Uses DATABRICKS authentication
+  - name: internal_team_d2d
+    type: D2D
+    recipient: analytics-team@company.com
+    recipient_databricks_org: "aws:us-west-2:a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # Metastore ID
+    comment: "Internal analytics workspace"
+
+# ===================================================================
+# SHARES AND PIPELINES
+# ===================================================================
+share:
+  # ============================================================
+  # Share 1: Daily Finance Reports
+  # ============================================================
+  - name: finance_daily_reports
+    comment: "Daily financial reporting data"
+    recipients:
+      - external_partner_d2o
+      - internal_team_d2d
+
+    # Assets to share (3-part names: catalog.schema.table)
+    # Each asset MUST have a corresponding pipeline with matching source_asset
+    share_assets:
+      - main_catalog.finance.daily_transactions
+      - main_catalog.finance.revenue_summary
+
+    # Default target workspace for pipelines
+    delta_share:
+      ext_catalog_name: analytics_prod
+      ext_schema_name: finance_shared
+      tags:
+        - production
+        - finance
+
+    # Pipelines - one per share_asset
+    pipelines:
+      # Pipeline 1: Daily Transactions
+      - name_prefix: finance_transactions_pipeline
+        source_asset: main_catalog.finance.daily_transactions  # MUST match share_asset
+        target_asset: daily_transactions_external  # Target table name
+        scd_type: "2"  # SCD Type 2 (track changes)
+        key_columns: "transaction_id,transaction_date"  # MUST be valid columns in source table
+        serverless: true
+        notification:
+          - finance-ops@company.com
+        tags:
+          environment: production
+          owner: finance_team
+        schedule:
+          cron: "0 0 2 * * ?"  # Daily at 2 AM
+          timezone: "America/New_York"
+
+      # Pipeline 2: Revenue Summary
+      - name_prefix: finance_revenue_pipeline
+        source_asset: main_catalog.finance.revenue_summary  # MUST match share_asset
+        target_asset: revenue_summary_external
+        scd_type: "1"  # SCD Type 1 (overwrite)
+        key_columns: ""  # Empty for Type 1
+        serverless: true
+        notification:
+          - finance-leadership@company.com
+        tags:
+          environment: production
+          owner: finance_team
+        schedule:
+          cron: "0 0 6 * * ?"  # Daily at 6 AM
+          timezone: "UTC"
+
+  # ============================================================
+  # Share 2: Real-time Operations Data
+  # ============================================================
+  - name: operations_realtime
+    comment: "Real-time operational metrics"
+    recipients:
+      - internal_team_d2d
+
+    share_assets:
+      - ops_catalog.metrics.system_health
+
+    delta_share:
+      ext_catalog_name: ops_analytics
+      ext_schema_name: realtime
+
+    pipelines:
+      # Continuous streaming pipeline
+      - name_prefix: ops_health_stream
+        source_asset: ops_catalog.metrics.system_health
+        target_asset: system_health_stream
+        scd_type: "1"
+        key_columns: ""
+        serverless: true
+        notification:
+          - ops-team@company.com
+        schedule: "continuous"  # Real-time streaming (not yet supported)
+
+# ===================================================================
+# VALIDATION NOTES FOR NEW STRATEGY
+# ===================================================================
+# 1. Metadata validation:
+#    - All emails must be valid (e.g., @company.com, not @company.co)
+#    - Supports AD group names without @ symbol
+#    - workspace_url must be reachable via HTTP HEAD request
+#    - servicenow is required
+#
+# 2. Share assets validation:
+#    - Every share_asset MUST have a corresponding pipeline
+#    - Pipeline source_asset MUST match a share_asset
+#
+# 3. Pipeline validation:
+#    - key_columns MUST exist in the source table
+#    - source_asset format: catalog.schema.table (3 parts)
+#    - target_asset is the table name only (not full path)
+#
+# 4. Schedule validation:
+#    - cron: Quartz 6-field format
+#    - timezone: Valid IANA timezone
+#    - "continuous" is logged as warning (not yet supported)

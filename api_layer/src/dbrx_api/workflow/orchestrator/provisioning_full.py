@@ -4,19 +4,19 @@ Share Pack Provisioning - FULL Implementation
 Implements complete provisioning with actual Databricks API calls.
 """
 
-from datetime import datetime, timezone
-from typing import Any, Dict
-from uuid import UUID
+from datetime import datetime
+from datetime import timezone
+from typing import Any
+from typing import Dict
 
 from loguru import logger
 
 from dbrx_api.dbrx_auth.token_gen import get_auth_token
-from dbrx_api.dltshr.recipient import create_recipient_d2d, create_recipient_d2o
-from dbrx_api.dltshr.share import (
-    add_data_object_to_share,
-    add_recipients_to_share,
-    create_share,
-)
+from dbrx_api.dltshr.recipient import create_recipient_d2d
+from dbrx_api.dltshr.recipient import create_recipient_d2o
+from dbrx_api.dltshr.share import add_data_object_to_share
+from dbrx_api.dltshr.share import add_recipients_to_share
+from dbrx_api.dltshr.share import create_share
 from dbrx_api.jobs.dbrx_pipelines import create_pipeline
 from dbrx_api.workflow.orchestrator.status_tracker import StatusTracker
 
@@ -192,7 +192,7 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
                 # Extract schedule info (first asset in schedule dict)
                 schedule_dict = pipeline_config["schedule"]
                 asset_name = list(schedule_dict.keys())[0]
-                schedule_config = schedule_dict[asset_name]
+                schedule_dict[asset_name]
 
                 # Build configuration dictionary for create_pipeline
                 configuration = {
@@ -224,9 +224,11 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
         await tracker.complete("Provisioning completed successfully")
 
         logger.success(f"Share pack {share_pack_id} provisioned successfully")
-        logger.info(f"Created {len(created_resources['recipients'])} recipients, "
-                   f"{len(created_resources['shares'])} shares, "
-                   f"{len(created_resources['pipelines'])} pipelines")
+        logger.info(
+            f"Created {len(created_resources['recipients'])} recipients, "
+            f"{len(created_resources['shares'])} shares, "
+            f"{len(created_resources['pipelines'])} pipelines"
+        )
 
     except Exception as e:
         await tracker.fail(str(e))
