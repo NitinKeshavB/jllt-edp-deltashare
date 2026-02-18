@@ -120,9 +120,10 @@ async def start_queue_consumer(queue_client, db_pool):
 
                     # Call orchestrator based on strategy with retry logic
                     from dbrx_api.workflow.orchestrator.provisioning import provision_sharepack_new
+                    from dbrx_api.workflow.orchestrator.provisioning_delete import provision_sharepack_delete
                     from dbrx_api.workflow.orchestrator.provisioning_update import provision_sharepack_update
 
-                    strategy = share_pack["strategy"].upper()
+                    strategy = (share_pack.get("strategy") or "NEW").strip().upper()
                     logger.info(f"Provisioning share pack {share_pack_id} with strategy: {strategy}")
 
                     # Retry logic - retry only once on failure (2 total attempts)
@@ -142,13 +143,18 @@ async def start_queue_consumer(queue_client, db_pool):
                                     pool=db_pool.pool,
                                     share_pack=share_pack,
                                 )
+                            elif strategy == "DELETE":
+                                await provision_sharepack_delete(
+                                    pool=db_pool.pool,
+                                    share_pack=share_pack,
+                                )
                             else:
                                 logger.error(f"Unknown strategy '{strategy}' for {share_pack_id}")
                                 await repo.update_status(
                                     UUID(share_pack_id),
                                     "FAILED",
                                     f"Unknown strategy: {strategy}",
-                                    f"Strategy must be NEW or UPDATE, got: {strategy}",
+                                    f"Strategy must be NEW, UPDATE, or DELETE, got: {strategy}",
                                     "orchestrator",
                                 )
                                 break
@@ -163,17 +169,10 @@ async def start_queue_consumer(queue_client, db_pool):
                             is_retryable = is_retryable_error(prov_error)
 
                             if not is_retryable:
-                                # Non-retryable error (validation, permission, configuration errors)
-                                # Fail immediately without retry
-                                error_msg = f"Provisioning failed with non-retryable error: {str(prov_error)}"
-                                logger.error(f"Non-retryable error detected - failing immediately: {error_msg}")
-                                await repo.update_status(
-                                    UUID(share_pack_id),
-                                    "FAILED",
-                                    f"Non-retryable error: {type(prov_error).__name__}",
-                                    error_msg,
-                                    "orchestrator",
-                                )
+                                # Non-retryable: orchestrator already called tracker.fail() with real
+                                # error and step - do not overwrite status here (preserves accurate
+                                # ErrorMessage and ProvisioningStatus for GET sharepack status).
+                                logger.error(f"Non-retryable error detected - failing immediately: {prov_error}")
                                 raise  # Re-raise to outer exception handler
 
                             # Retryable error - check if we have retries left
@@ -189,19 +188,9 @@ async def start_queue_consumer(queue_client, db_pool):
                                 )
                                 await asyncio.sleep(600)  # Wait 10 minutes (600 seconds) before retry
                             else:
-                                # Retryable error but retries exhausted
-                                error_msg = (
-                                    f"Provisioning failed after {max_retries + 1} attempts. "
-                                    f"Last error: {str(last_error)}"
-                                )
-                                logger.error(f"Retried failed request and stopping: {error_msg}")
-                                await repo.update_status(
-                                    UUID(share_pack_id),
-                                    "FAILED",
-                                    "Retried failed request and stopping",
-                                    error_msg,
-                                    "orchestrator",
-                                )
+                                # Retries exhausted: orchestrator already called tracker.fail() with
+                                # real error - do not overwrite status here.
+                                logger.error(f"Retried failed request and stopping. Last error: {last_error}")
                                 raise  # Re-raise to outer exception handler
 
                     # Delete message to acknowledge processing
@@ -212,6 +201,9 @@ async def start_queue_consumer(queue_client, db_pool):
                     # Message will become visible again for retry
                     # Don't delete - let it retry after visibility timeout
 
+        except asyncio.CancelledError:
+            logger.info("Queue consumer task cancelled - shutting down")
+            raise
         except Exception as e:
             logger.error(f"Queue consumer error: {e}", exc_info=True)
 

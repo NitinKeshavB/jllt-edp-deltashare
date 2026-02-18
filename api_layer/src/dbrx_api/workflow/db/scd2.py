@@ -202,6 +202,7 @@ async def soft_delete_scd2(
     entity_id: UUID,
     deleted_by: str,
     deletion_reason: str,
+    request_source: Optional[str] = None,
 ) -> Optional[UUID]:
     """
     Soft delete an entity (SCD2 style).
@@ -215,6 +216,7 @@ async def soft_delete_scd2(
         entity_id: Business key value
         deleted_by: Who/what is deleting this entity
         deletion_reason: Why this entity is being deleted
+        request_source: Origin of delete request (share_pack, api, sync)
 
     Returns:
         record_id (UUID) of the deleted version, or None if entity not found
@@ -245,6 +247,8 @@ async def soft_delete_scd2(
         ]
     }
     new_fields["is_deleted"] = True
+    if request_source is not None:
+        new_fields["request_source"] = request_source
 
     # Insert new version
     record_id = await expire_and_insert_scd2(

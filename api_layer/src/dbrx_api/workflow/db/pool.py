@@ -136,8 +136,11 @@ class DomainDBPool:
                     # Check if all expected tables exist
                     if existing_tables == self.EXPECTED_TABLES:
                         logger.info(
-                            f"Deltashare schema and all {table_count} expected tables exist - skipping migrations"
+                            f"Deltashare schema and all {table_count} expected tables exist - running incremental migrations only"
                         )
+                        from dbrx_api.workflow.db.migrations import run_incremental_migrations
+
+                        await run_incremental_migrations(self.pool)
                         return
 
                     # Check for missing tables

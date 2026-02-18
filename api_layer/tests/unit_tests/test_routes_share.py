@@ -3,20 +3,22 @@
 from databricks.sdk.service.sharing import UpdateSharePermissionsResponse
 from fastapi import status
 
+from tests.consts import API_BASE
+
 
 class TestShareAuthenticationHeaders:
     """Tests for required authentication headers on Share endpoints."""
 
     def test_missing_workspace_url_header(self, unauthenticated_client):
         """Test that requests without X-Workspace-URL header are rejected."""
-        response = unauthenticated_client.get("/shares")
+        response = unauthenticated_client.get(f"{API_BASE}/shares")
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         assert "X-Workspace-URL" in str(response.json())
 
     def test_missing_all_headers(self, unauthenticated_client):
         """Test that requests without required headers are rejected."""
-        response = unauthenticated_client.get("/shares")
+        response = unauthenticated_client.get(f"{API_BASE}/shares")
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         assert "X-Workspace-URL" in str(response.json())
@@ -28,7 +30,7 @@ class TestWorkspaceUrlValidation:
     def test_valid_azure_workspace_url(self, unauthenticated_client):
         """Test that Azure Databricks URL pattern is accepted."""
         response = unauthenticated_client.get(
-            "/shares",
+            f"{API_BASE}/shares",
             headers={
                 "X-Workspace-URL": "https://adb-1234567890123456.12.azuredatabricks.net",
             },
@@ -39,7 +41,7 @@ class TestWorkspaceUrlValidation:
     def test_valid_aws_workspace_url(self, unauthenticated_client):
         """Test that AWS Databricks URL pattern is accepted."""
         response = unauthenticated_client.get(
-            "/shares",
+            f"{API_BASE}/shares",
             headers={
                 "X-Workspace-URL": "https://my-workspace.cloud.databricks.com",
             },
@@ -50,7 +52,7 @@ class TestWorkspaceUrlValidation:
     def test_valid_gcp_workspace_url(self, unauthenticated_client):
         """Test that GCP Databricks URL pattern is accepted."""
         response = unauthenticated_client.get(
-            "/shares",
+            f"{API_BASE}/shares",
             headers={
                 "X-Workspace-URL": "https://my-workspace.gcp.databricks.com",
             },
@@ -61,7 +63,7 @@ class TestWorkspaceUrlValidation:
     def test_invalid_non_databricks_url(self, unauthenticated_client):
         """Test that non-Databricks URLs are rejected."""
         response = unauthenticated_client.get(
-            "/shares",
+            f"{API_BASE}/shares",
             headers={
                 "X-Workspace-URL": "https://example.com",
             },
@@ -73,7 +75,7 @@ class TestWorkspaceUrlValidation:
     def test_invalid_http_url(self, unauthenticated_client):
         """Test that HTTP (non-HTTPS) URLs are rejected."""
         response = unauthenticated_client.get(
-            "/shares",
+            f"{API_BASE}/shares",
             headers={
                 "X-Workspace-URL": "http://test.azuredatabricks.net",
             },
@@ -85,7 +87,7 @@ class TestWorkspaceUrlValidation:
     def test_invalid_random_domain_url(self, unauthenticated_client):
         """Test that random domain URLs are rejected."""
         response = unauthenticated_client.get(
-            "/shares",
+            f"{API_BASE}/shares",
             headers={
                 "X-Workspace-URL": "https://malicious-site.io/databricks",
             },
@@ -97,7 +99,7 @@ class TestWorkspaceUrlValidation:
     def test_invalid_partial_databricks_url(self, unauthenticated_client):
         """Test that partial Databricks-like URLs are rejected."""
         response = unauthenticated_client.get(
-            "/shares",
+            f"{API_BASE}/shares",
             headers={
                 "X-Workspace-URL": "https://fake-azuredatabricks.net.evil.com",
             },
@@ -108,7 +110,7 @@ class TestWorkspaceUrlValidation:
     def test_url_with_trailing_slash_accepted(self, unauthenticated_client):
         """Test that URLs with trailing slash are accepted and normalized."""
         response = unauthenticated_client.get(
-            "/shares",
+            f"{API_BASE}/shares",
             headers={
                 "X-Workspace-URL": "https://test-workspace.azuredatabricks.net/",
             },
@@ -126,7 +128,7 @@ class TestWorkspaceUrlValidation:
             mock_check.return_value = (False, "Workspace hostname 'fake.azuredatabricks.net' could not be resolved.")
 
             response = unauthenticated_client.get(
-                "/shares",
+                f"{API_BASE}/shares",
                 headers={
                     "X-Workspace-URL": "https://fake.azuredatabricks.net",
                 },
@@ -144,7 +146,7 @@ class TestWorkspaceUrlValidation:
             mock_check.return_value = (False, "Connection to workspace timed out.")
 
             response = unauthenticated_client.get(
-                "/shares",
+                f"{API_BASE}/shares",
                 headers={
                     "X-Workspace-URL": "https://slow-workspace.azuredatabricks.net",
                 },
@@ -159,7 +161,7 @@ class TestGetShareByName:
 
     def test_get_share_by_name_success(self, client, mock_share_business_logic):
         """Test successful retrieval of a share by name."""
-        response = client.get("/shares/test_share")
+        response = client.get(f"{API_BASE}/shares/test_share")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -171,7 +173,7 @@ class TestGetShareByName:
         """Test retrieval of non-existent share."""
         mock_share_business_logic["get"].return_value = None
 
-        response = client.get("/shares/nonexistent_share")
+        response = client.get(f"{API_BASE}/shares/nonexistent_share")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "not found" in response.json()["detail"].lower()
@@ -182,7 +184,7 @@ class TestListShares:
 
     def test_list_all_shares_success(self, client, mock_share_business_logic):
         """Test successful listing of all shares."""
-        response = client.get("/shares")
+        response = client.get(f"{API_BASE}/shares")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -195,7 +197,7 @@ class TestListShares:
         """Test listing shares with prefix filter."""
         mock_share_business_logic["list"].return_value = [mock_share_info(name="test_share1")]
 
-        response = client.get("/shares?prefix=test")
+        response = client.get(f"{API_BASE}/shares?prefix=test")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -203,7 +205,7 @@ class TestListShares:
 
     def test_list_shares_with_page_size(self, client, mock_share_business_logic):
         """Test listing shares with custom page size."""
-        response = client.get("/shares?page_size=50")
+        response = client.get(f"{API_BASE}/shares?page_size=50")
 
         assert response.status_code == status.HTTP_200_OK
         mock_share_business_logic["list"].assert_called_once()
@@ -212,14 +214,14 @@ class TestListShares:
         """Test listing shares when no shares exist."""
         mock_share_business_logic["list"].return_value = []
 
-        response = client.get("/shares")
+        response = client.get(f"{API_BASE}/shares")
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
         assert "No shares found" in response.json()["detail"]
 
     def test_list_shares_invalid_page_size(self, client):
         """Test listing shares with invalid page size."""
-        response = client.get("/shares?page_size=0")
+        response = client.get(f"{API_BASE}/shares?page_size=0")
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
@@ -229,7 +231,7 @@ class TestDeleteShare:
 
     def test_delete_share_success(self, client, mock_share_business_logic):
         """Test successful deletion of a share."""
-        response = client.delete("/shares/test_share")
+        response = client.delete(f"{API_BASE}/shares/test_share")
 
         assert response.status_code == status.HTTP_200_OK
         assert "Deleted Share successfully" in response.json()["message"]
@@ -238,7 +240,7 @@ class TestDeleteShare:
         """Test deletion of non-existent share."""
         mock_share_business_logic["get"].return_value = None
 
-        response = client.delete("/shares/nonexistent_share")
+        response = client.delete(f"{API_BASE}/shares/nonexistent_share")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "not found" in response.json()["detail"].lower()
@@ -247,7 +249,7 @@ class TestDeleteShare:
         """Test deletion when user is not the owner."""
         mock_share_business_logic["delete"].return_value = "User is not an owner of Share"
 
-        response = client.delete("/shares/test_share")
+        response = client.delete(f"{API_BASE}/shares/test_share")
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "Permission denied" in response.json()["detail"]
@@ -256,7 +258,7 @@ class TestDeleteShare:
         """Test when share is deleted between check and deletion."""
         mock_share_business_logic["delete"].return_value = "Share not found"
 
-        response = client.delete("/shares/test_share")
+        response = client.delete(f"{API_BASE}/shares/test_share")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -270,7 +272,7 @@ class TestCreateShare:
         mock_share_business_logic["get"].return_value = None
 
         response = client.post(
-            "/shares/new_share",
+            f"{API_BASE}/shares/new_share",
             params={"description": "Test share description", "storage_root": "s3://test-bucket/"},
         )
 
@@ -281,21 +283,21 @@ class TestCreateShare:
 
     def test_create_share_already_exists(self, client, mock_share_business_logic):
         """Test creation of a share that already exists."""
-        response = client.post("/shares/test_share", params={"description": "Duplicate share"})
+        response = client.post(f"{API_BASE}/shares/test_share", params={"description": "Duplicate share"})
 
         assert response.status_code == status.HTTP_409_CONFLICT
         assert "already exists" in response.json()["detail"].lower()
 
     def test_create_share_empty_name(self, client):
         """Test creation with empty share name."""
-        response = client.post("/shares/ ", params={"description": "Test description"})
+        response = client.post(f"{API_BASE}/shares/ ", params={"description": "Test description"})
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "cannot be empty" in response.json()["detail"]
 
     def test_create_share_invalid_name_format(self, client):
         """Test creation with invalid share name format."""
-        response = client.post("/shares/invalid.share", params={"description": "Test description"})
+        response = client.post(f"{API_BASE}/shares/invalid.share", params={"description": "Test description"})
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Invalid share name" in response.json()["detail"]
@@ -305,7 +307,7 @@ class TestCreateShare:
         invalid_names = ["share/name", "share name", "share.name", "share@name"]
 
         for invalid_name in invalid_names:
-            response = client.post(f"/shares/{invalid_name}", params={"description": "Test description"})
+            response = client.post(f"{API_BASE}/shares/{invalid_name}", params={"description": "Test description"})
             assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_create_share_sdk_error(self, client, mock_share_business_logic):
@@ -313,7 +315,7 @@ class TestCreateShare:
         mock_share_business_logic["get"].return_value = None
         mock_share_business_logic["create"].return_value = "is not a valid name"
 
-        response = client.post("/shares/invalid_name", params={"description": "Test description"})
+        response = client.post(f"{API_BASE}/shares/invalid_name", params={"description": "Test description"})
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -329,7 +331,7 @@ class TestAddDataObjectsToShare:
             "schemas": ["catalog.schema"],
         }
 
-        response = client.put("/shares/test_share/dataobject/add", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/add", json=payload)
 
         assert response.status_code == status.HTTP_200_OK
         mock_share_business_logic["add_objects"].assert_called_once()
@@ -339,7 +341,7 @@ class TestAddDataObjectsToShare:
         mock_share_business_logic["get"].return_value = None
 
         payload = {"tables": ["catalog.schema.table1"]}
-        response = client.put("/shares/nonexistent_share/dataobject/add", json=payload)
+        response = client.put(f"{API_BASE}/shares/nonexistent_share/dataobject/add", json=payload)
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "not found" in response.json()["detail"].lower()
@@ -349,7 +351,7 @@ class TestAddDataObjectsToShare:
         mock_share_business_logic["add_objects"].return_value = "Data object already exists"
 
         payload = {"tables": ["catalog.schema.table1"]}
-        response = client.put("/shares/test_share/dataobject/add", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/add", json=payload)
 
         assert response.status_code == status.HTTP_409_CONFLICT
 
@@ -358,7 +360,7 @@ class TestAddDataObjectsToShare:
         mock_share_business_logic["add_objects"].return_value = "Permission denied"
 
         payload = {"tables": ["catalog.schema.table1"]}
-        response = client.put("/shares/test_share/dataobject/add", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/add", json=payload)
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -367,7 +369,7 @@ class TestAddDataObjectsToShare:
         mock_share_business_logic["add_objects"].return_value = "Table not found"
 
         payload = {"tables": ["catalog.schema.nonexistent_table"]}
-        response = client.put("/shares/test_share/dataobject/add", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/add", json=payload)
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -376,7 +378,7 @@ class TestAddDataObjectsToShare:
         mock_share_business_logic["add_objects"].return_value = "No data objects provided"
 
         payload = {"tables": [], "views": [], "schemas": []}
-        response = client.put("/shares/test_share/dataobject/add", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/add", json=payload)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -385,7 +387,7 @@ class TestAddDataObjectsToShare:
         mock_share_business_logic["add_objects"].return_value = "Invalid parameter"
 
         payload = {"tables": ["invalid_table_name"]}
-        response = client.put("/shares/test_share/dataobject/add", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/add", json=payload)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -394,7 +396,7 @@ class TestAddDataObjectsToShare:
         mock_share_business_logic["add_objects"].return_value = "Some unexpected error occurred"
 
         payload = {"tables": ["catalog.schema.table1"]}
-        response = client.put("/shares/test_share/dataobject/add", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/add", json=payload)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Some unexpected error" in response.json()["detail"]
@@ -410,7 +412,7 @@ class TestRevokeDataObjectsFromShare:
             "views": ["catalog.schema.view1"],
         }
 
-        response = client.put("/shares/test_share/dataobject/revoke", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/revoke", json=payload)
 
         assert response.status_code == status.HTTP_200_OK
         mock_share_business_logic["revoke_objects"].assert_called_once()
@@ -420,7 +422,7 @@ class TestRevokeDataObjectsFromShare:
         mock_share_business_logic["get"].return_value = None
 
         payload = {"tables": ["catalog.schema.table1"]}
-        response = client.put("/shares/nonexistent_share/dataobject/revoke", json=payload)
+        response = client.put(f"{API_BASE}/shares/nonexistent_share/dataobject/revoke", json=payload)
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -429,7 +431,7 @@ class TestRevokeDataObjectsFromShare:
         mock_share_business_logic["revoke_objects"].return_value = "User is not an owner"
 
         payload = {"tables": ["catalog.schema.table1"]}
-        response = client.put("/shares/test_share/dataobject/revoke", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/revoke", json=payload)
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -438,7 +440,7 @@ class TestRevokeDataObjectsFromShare:
         mock_share_business_logic["revoke_objects"].return_value = "Data object not found"
 
         payload = {"tables": ["catalog.schema.nonexistent_table"]}
-        response = client.put("/shares/test_share/dataobject/revoke", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/revoke", json=payload)
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -447,7 +449,7 @@ class TestRevokeDataObjectsFromShare:
         mock_share_business_logic["revoke_objects"].return_value = "No data objects provided"
 
         payload = {}
-        response = client.put("/shares/test_share/dataobject/revoke", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/revoke", json=payload)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -456,7 +458,7 @@ class TestRevokeDataObjectsFromShare:
         mock_share_business_logic["revoke_objects"].return_value = "Cannot remove schemas from share"
 
         payload = {"tables": ["catalog.schema.table1"]}
-        response = client.put("/shares/test_share/dataobject/revoke", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/revoke", json=payload)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Cannot remove schemas" in response.json()["detail"]
@@ -466,7 +468,7 @@ class TestRevokeDataObjectsFromShare:
         mock_share_business_logic["revoke_objects"].return_value = "Some unexpected revocation error"
 
         payload = {"tables": ["catalog.schema.table1"]}
-        response = client.put("/shares/test_share/dataobject/revoke", json=payload)
+        response = client.put(f"{API_BASE}/shares/test_share/dataobject/revoke", json=payload)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Some unexpected revocation error" in response.json()["detail"]
@@ -479,7 +481,9 @@ class TestAddRecipientToShare:
         """Test successful addition of recipient to share."""
         mock_share_business_logic["add_recipients"].return_value = UpdateSharePermissionsResponse()
 
-        response = client.put("/shares/test_share/recipients/add", params={"recipient_name": "test_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/test_share/recipients/add", params={"recipient_name": "test_recipient"}
+        )
 
         assert response.status_code == status.HTTP_200_OK
         mock_share_business_logic["add_recipients"].assert_called_once()
@@ -488,7 +492,9 @@ class TestAddRecipientToShare:
         """Test adding recipient that already has access."""
         mock_share_business_logic["add_recipients"].return_value = "Recipient already has access"
 
-        response = client.put("/shares/test_share/recipients/add", params={"recipient_name": "test_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/test_share/recipients/add", params={"recipient_name": "test_recipient"}
+        )
 
         assert response.status_code == status.HTTP_409_CONFLICT
 
@@ -496,7 +502,9 @@ class TestAddRecipientToShare:
         """Test adding recipient without permission."""
         mock_share_business_logic["add_recipients"].return_value = "Permission denied - not an owner"
 
-        response = client.put("/shares/test_share/recipients/add", params={"recipient_name": "test_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/test_share/recipients/add", params={"recipient_name": "test_recipient"}
+        )
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -504,7 +512,9 @@ class TestAddRecipientToShare:
         """Test adding recipient to non-existent share."""
         mock_share_business_logic["add_recipients"].return_value = "Share not found"
 
-        response = client.put("/shares/nonexistent_share/recipients/add", params={"recipient_name": "test_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/nonexistent_share/recipients/add", params={"recipient_name": "test_recipient"}
+        )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -512,7 +522,9 @@ class TestAddRecipientToShare:
         """Test adding non-existent recipient."""
         mock_share_business_logic["add_recipients"].return_value = "Recipient does not exist"
 
-        response = client.put("/shares/test_share/recipients/add", params={"recipient_name": "nonexistent_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/test_share/recipients/add", params={"recipient_name": "nonexistent_recipient"}
+        )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -520,7 +532,9 @@ class TestAddRecipientToShare:
         """Test adding recipient with a generic error."""
         mock_share_business_logic["add_recipients"].return_value = "Some unexpected add recipient error"
 
-        response = client.put("/shares/test_share/recipients/add", params={"recipient_name": "test_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/test_share/recipients/add", params={"recipient_name": "test_recipient"}
+        )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Some unexpected add recipient error" in response.json()["detail"]
@@ -533,7 +547,9 @@ class TestRemoveRecipientFromShare:
         """Test successful removal of recipient from share."""
         mock_share_business_logic["remove_recipients"].return_value = UpdateSharePermissionsResponse()
 
-        response = client.put("/shares/test_share/recipients/remove", params={"recipient_name": "test_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/test_share/recipients/remove", params={"recipient_name": "test_recipient"}
+        )
 
         assert response.status_code == status.HTTP_200_OK
         mock_share_business_logic["remove_recipients"].assert_called_once()
@@ -542,7 +558,9 @@ class TestRemoveRecipientFromShare:
         """Test removing recipient without permission."""
         mock_share_business_logic["remove_recipients"].return_value = "Permission denied - not an owner"
 
-        response = client.put("/shares/test_share/recipients/remove", params={"recipient_name": "test_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/test_share/recipients/remove", params={"recipient_name": "test_recipient"}
+        )
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -551,7 +569,7 @@ class TestRemoveRecipientFromShare:
         mock_share_business_logic["remove_recipients"].return_value = "Share not found"
 
         response = client.put(
-            "/shares/nonexistent_share/recipients/remove", params={"recipient_name": "test_recipient"}
+            f"{API_BASE}/shares/nonexistent_share/recipients/remove", params={"recipient_name": "test_recipient"}
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -560,7 +578,9 @@ class TestRemoveRecipientFromShare:
         """Test removing recipient that doesn't have access."""
         mock_share_business_logic["remove_recipients"].return_value = "Recipient does not have access to share"
 
-        response = client.put("/shares/test_share/recipients/remove", params={"recipient_name": "test_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/test_share/recipients/remove", params={"recipient_name": "test_recipient"}
+        )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -568,7 +588,9 @@ class TestRemoveRecipientFromShare:
         """Test removing recipient with a generic error."""
         mock_share_business_logic["remove_recipients"].return_value = "Some unexpected remove recipient error"
 
-        response = client.put("/shares/test_share/recipients/remove", params={"recipient_name": "test_recipient"})
+        response = client.put(
+            f"{API_BASE}/shares/test_share/recipients/remove", params={"recipient_name": "test_recipient"}
+        )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Some unexpected remove recipient error" in response.json()["detail"]
@@ -587,7 +609,7 @@ class TestDatabricksErrorHandling:
         with patch("dbrx_api.routes.routes_share.get_shares") as mock_get:
             mock_get.side_effect = Unauthenticated("Invalid token")
 
-            response = client.get("/shares/test_share")
+            response = client.get(f"{API_BASE}/shares/test_share")
 
             assert response.status_code == status.HTTP_401_UNAUTHORIZED
             assert "authentication failed" in response.json()["detail"].lower()
@@ -601,7 +623,7 @@ class TestDatabricksErrorHandling:
         with patch("dbrx_api.routes.routes_share.get_shares") as mock_get:
             mock_get.side_effect = PermissionDenied("User not authorized")
 
-            response = client.get("/shares/test_share")
+            response = client.get(f"{API_BASE}/shares/test_share")
 
             assert response.status_code == status.HTTP_403_FORBIDDEN
             assert "access denied" in response.json()["detail"].lower()
@@ -615,7 +637,7 @@ class TestDatabricksErrorHandling:
         with patch("dbrx_api.routes.routes_share.get_shares") as mock_get:
             mock_get.side_effect = NotFound("Resource not found")
 
-            response = client.get("/shares/test_share")
+            response = client.get(f"{API_BASE}/shares/test_share")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
             assert "not found" in response.json()["detail"].lower()
@@ -629,7 +651,7 @@ class TestDatabricksErrorHandling:
         with patch("dbrx_api.routes.routes_share.get_shares") as mock_get:
             mock_get.side_effect = BadRequest("Invalid parameter")
 
-            response = client.get("/shares/test_share")
+            response = client.get(f"{API_BASE}/shares/test_share")
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -642,7 +664,7 @@ class TestDatabricksErrorHandling:
         with patch("dbrx_api.routes.routes_share.get_shares") as mock_get:
             mock_get.side_effect = DatabricksError("Some internal error")
 
-            response = client.get("/shares/test_share")
+            response = client.get(f"{API_BASE}/shares/test_share")
 
             assert response.status_code == status.HTTP_502_BAD_GATEWAY
             assert "databricks service error" in response.json()["detail"].lower()

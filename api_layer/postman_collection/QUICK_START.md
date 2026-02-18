@@ -16,8 +16,8 @@
 ## What Changed
 
 All collections have been updated with:
-1. ✅ `Ocp-Apim-Subscription-Key` header added to all requests
-2. ✅ `base_url` changed from `http://localhost:8000` to `https://your-api.azurewebsites.net`
+1. ✅ `Subscription-Key` header added to all requests
+2. ✅ `base_url` changed from `https://api-dev.jll.com/udp/dltshr` to `https://your-api.azurewebsites.net`
 3. ✅ `subscription_key` variable added to all collections
 4. ✅ Proper collection variables for entity names
 5. ✅ Detailed descriptions for all endpoints

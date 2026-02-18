@@ -78,6 +78,19 @@ async def handle_broad_exceptions(request: Request, call_next):
         return response
 
 
+def _sanitize_validation_errors_for_json(errors: list) -> list:
+    """Return a JSON-serializable copy of Pydantic errors (ctx may contain non-serializable values)."""
+    return [
+        {
+            "loc": e.get("loc"),
+            "msg": str(e.get("msg", "")),
+            "input": e.get("input"),
+            "type": e.get("type"),
+        }
+        for e in errors
+    ]
+
+
 # fastapi docs on error handlers: https://fastapi.tiangolo.com/tutorial/handling-errors/
 async def handle_pydantic_validation_errors(request: Request, exc: pydantic.ValidationError) -> JSONResponse:
     """Handle Pydantic validation errors."""
@@ -85,8 +98,8 @@ async def handle_pydantic_validation_errors(request: Request, exc: pydantic.Vali
     error_response = {
         "detail": [
             {
-                "msg": error["msg"],
-                "input": error["input"],
+                "msg": str(error.get("msg", "")),
+                "input": error.get("input"),
             }
             for error in errors
         ]
@@ -95,7 +108,8 @@ async def handle_pydantic_validation_errors(request: Request, exc: pydantic.Vali
     # Get request body from request state (set by RequestContextMiddleware)
     request_body = getattr(request.state, "request_body", None)
 
-    # Log validation errors with full context
+    # Log validation errors with full context (sanitize: raw errors can contain non-JSON-serializable ctx)
+    errors_safe = _sanitize_validation_errors_for_json(errors)
     logger.warning(
         f"Validation error: {len(errors)} validation errors",
         http_status=422,
@@ -103,7 +117,7 @@ async def handle_pydantic_validation_errors(request: Request, exc: pydantic.Vali
         http_method=request.method,
         url_path=str(request.url.path),
         error_type="ValidationError",
-        validation_errors=json.dumps(errors),
+        validation_errors=json.dumps(errors_safe),
         request_body=json.dumps(request_body) if request_body else None,
         response_body=json.dumps(error_response),
     )

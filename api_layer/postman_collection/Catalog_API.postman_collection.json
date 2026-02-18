@@ -8,7 +8,7 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "https://your-api.azurewebsites.net",
+			"value": "https://api-dev.jll.com/udp/dltshr",
 			"type": "string"
 		},
 		{
@@ -18,7 +18,7 @@
 		},
 		{
 			"key": "subscription_key",
-			"value": "",
+			"value": "your-subscription-key-here",
 			"type": "string"
 		},
 		{
@@ -29,39 +29,29 @@
 	],
 	"item": [
 		{
-			"name": "Create Catalog",
+			"name": "List All Catalogs",
 			"request": {
-				"method": "POST",
+				"method": "GET",
 				"header": [
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
 						"type": "text",
-						"description": "Databricks workspace URL (required)"
+						"description": "Databricks workspace URL"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text",
-						"description": "Only required when accessing via Azure API Management (not for local testing)",
-						"disabled": true
-					},
-					{
-						"key": "Content-Type",
-						"value": "application/json",
-						"type": "text"
+						"description": "API subscription key"
 					}
 				],
-				"body": {
-					"mode": "raw",
-					"raw": "{\n\t\"comment\": \"Catalog for team analytics\",\n\t\"external_location\": null\n}"
-				},
 				"url": {
-					"raw": "{{base_url}}/catalogs/{{catalog_name}}",
+					"raw": "{{base_url}}/catalogs",
 					"host": ["{{base_url}}"],
-					"path": ["catalogs", "{{catalog_name}}"]
+					"path": ["catalogs"]
 				},
-				"description": "Create a new Unity Catalog. Optionally specify an external location for storage. The service principal must have CREATE CATALOG privilege."
+				"description": "List all Unity Catalogs accessible to the service principal.\n\nResponse 200: Array of catalogs with name, owner, and count"
 			},
 			"response": []
 		},
@@ -77,11 +67,10 @@
 						"description": "Databricks workspace URL"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text",
-						"description": "Only required when accessing via Azure API Management (not for local testing)",
-						"disabled": true
+						"description": "API subscription key"
 					}
 				],
 				"url": {
@@ -89,14 +78,14 @@
 					"host": ["{{base_url}}"],
 					"path": ["catalogs", "{{catalog_name}}"]
 				},
-				"description": "Get details about a specific catalog. Returns catalog name, exists flag, and owner information."
+				"description": "Get details about a specific catalog including name, exists flag, and owner.\n\nResponse 200: catalog_name, exists, owner\nResponse 404: Catalog not found"
 			},
 			"response": []
 		},
 		{
-			"name": "List All Catalogs",
+			"name": "Create Catalog",
 			"request": {
-				"method": "GET",
+				"method": "POST",
 				"header": [
 					{
 						"key": "X-Workspace-URL",
@@ -105,19 +94,32 @@
 						"description": "Databricks workspace URL"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text",
-						"description": "Only required when accessing via Azure API Management (not for local testing)",
-						"disabled": true
+						"description": "API subscription key"
+					},
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
 					}
 				],
-				"url": {
-					"raw": "{{base_url}}/catalogs",
-					"host": ["{{base_url}}"],
-					"path": ["catalogs"]
+				"body": {
+					"mode": "raw",
+					"raw": "{\n\t\"comment\": \"Catalog for team analytics\",\n\t\"external_location\": null\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
 				},
-				"description": "List all Unity Catalogs accessible to the service principal. Returns catalog names and owners."
+				"url": {
+					"raw": "{{base_url}}/catalogs/{{catalog_name}}",
+					"host": ["{{base_url}}"],
+					"path": ["catalogs", "{{catalog_name}}"]
+				},
+				"description": "Create a new Unity Catalog. Service principal must have CREATE CATALOG privilege.\n\nRequest Body (optional):\n- comment: Catalog description\n- external_location: External storage location name\n\nResponse 201: message, catalog_name, created\nResponse 400: Invalid catalog name\nResponse 409: Catalog already exists"
 			},
 			"response": []
 		}

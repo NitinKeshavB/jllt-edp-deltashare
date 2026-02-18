@@ -8,12 +8,12 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "https://your-api.azurewebsites.net",
+			"value": "https://api-dev.jll.com/udp/dltshr",
 			"type": "string"
 		},
 		{
 			"key": "workspace_url",
-			"value": "https://adb-xxxx.azuredatabricks.net",
+			"value": "https://adb-1234567890123456.12.azuredatabricks.net",
 			"type": "string"
 		},
 		{
@@ -39,7 +39,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -61,7 +61,7 @@
 						}
 					]
 				},
-				"description": "List all DLT pipelines with optional name filtering. Returns pipeline details including ID, name, state, and configuration. Use search_string to filter by pipeline name."
+				"description": "List all DLT pipelines with optional name filtering. Returns pipeline details including ID, name, state, and configuration."
 			},
 			"response": []
 		},
@@ -76,7 +76,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -86,7 +86,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}"]
 				},
-				"description": "Get details of a specific DLT pipeline by name. Returns full pipeline configuration including catalog, target, libraries, and settings.\n\nValidation: Pipeline name is required and cannot be empty, contain only whitespace, or have leading/trailing spaces."
+				"description": "Get details of a specific DLT pipeline by name. Returns full pipeline configuration.\n\nValidation: Pipeline name is required and cannot be empty or have leading/trailing spaces.\n\nResponse 200: GetPipelineResponse\nResponse 400: Invalid pipeline name\nResponse 404: Pipeline not found"
 			},
 			"response": []
 		},
@@ -98,6 +98,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					},
 					{
@@ -120,7 +125,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}"]
 				},
-				"description": "Create a new Delta Live Tables (DLT) pipeline with comprehensive automated validations.\n\n**Required fields:**\n- target_catalog_name: Unity Catalog name\n- target_schema_name: Target schema name\n- configuration.pipelines.source_table: Source table (catalog.schema.table)\n- configuration.pipelines.keys: Primary key column(s)\n- configuration.pipelines.target_table: Target table name\n- configuration.pipelines.scd_type: SCD type (1 or 2)\n\n**Optional fields:**\n- notifications_list: Email addresses and/or AD group names\n- tags: Key-value pairs for pipeline metadata\n- serverless: Enable serverless compute (default: true)\n\n**Pre-creation validations performed automatically:**\n\n1. **Target Catalog**: Checks if target catalog exists. If not, creates it automatically and grants ALL PRIVILEGES to the service principal.\n\n2. **Target Schema**: Checks if target schema exists within the catalog. If not, creates it automatically.\n\n3. **Source Table**: Validates that source table exists, is accessible, and has Change Data Feed (CDF) enabled. If CDF is not enabled, attempts to enable it automatically using SQL warehouse.\n\n4. **Pipeline Keys**: Verifies that all specified keys exist as columns in the source table using case-insensitive matching.\n\n**System automatically sets:**\n- pipelines.sequence_by = \"_commit_version\"\n- pipelines.delete_expr = \"_change_type = 'delete'\"\n\n**Validation requirements:**\n- Pipeline name cannot have leading/trailing spaces or be empty\n- Source table must exist and be accessible\n- All keys must be valid column names in the source table\n- Target catalog and schema will be created if they don't exist\n\n**Note:** If CDF cannot be enabled automatically (e.g., no SQL warehouse available), the creation will fail with an appropriate error message."
+				"description": "Create a new DLT pipeline with comprehensive automated validations.\n\nRequired fields:\n- target_catalog_name: Unity Catalog name\n- target_schema_name: Target schema name\n- configuration.pipelines.source_table: Source table (catalog.schema.table)\n- configuration.pipelines.keys: Primary key column(s)\n- configuration.pipelines.target_table: Target table name\n- configuration.pipelines.scd_type: SCD type (1 or 2)\n\nOptional fields:\n- notifications_list: Email addresses and/or AD group names\n- tags: Key-value pairs for pipeline metadata\n- serverless: Enable serverless compute (default: true)\n\nPre-creation validations:\n1. Target Catalog: Creates if not exists\n2. Target Schema: Creates if not exists\n3. Source Table: Validates existence and CDF enabled\n4. Pipeline Keys: Verifies columns exist in source table\n\nResponse 201: CreatePipelineResponse or GetPipelineResponse\nResponse 400: Invalid request\nResponse 409: Pipeline already exists\nResponse 422: Validation error"
 			},
 			"response": []
 		},
@@ -135,7 +140,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -145,7 +150,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}"]
 				},
-				"description": "Permanently delete a DLT pipeline by name. User must be the owner. This will remove all pipeline configurations and stop any running updates.\n\nValidation: Pipeline name cannot have leading/trailing spaces or be empty."
+				"description": "Delete a DLT pipeline by name. User must be the owner.\n\nResponse 200: Pipeline deleted successfully\nResponse 400: Invalid pipeline name\nResponse 403: Permission denied\nResponse 404: Pipeline not found"
 			},
 			"response": []
 		},
@@ -157,6 +162,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					},
 					{
@@ -179,7 +189,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "configuration"]
 				},
-				"description": "Update DLT pipeline configuration (partial update for keys and target_table only).\n\n**Updateable fields:**\n- pipelines.keys: Primary key column(s) - single column or comma-separated list\n- pipelines.target_table: Target table name\n\n**Keys Validation:**\nWhen updating pipelines.keys, the API automatically validates that all specified keys exist as columns in the source table using case-insensitive matching. If any keys are invalid, the update will fail with a clear error message listing the invalid keys.\n\n**Immutable fields (cannot be updated after creation):**\n- pipelines.source_table: Source table reference\n- pipelines.scd_type: SCD type (1 or 2)\n\n**System automatically maintains:**\n- pipelines.sequence_by = \"_commit_version\"\n- pipelines.delete_expr = \"_change_type = 'delete'\"\n\nAll other pipeline settings (catalog, libraries, storage, etc.) are preserved.\n\n**Examples:**\n- Update only keys: {\"pipelines.keys\": \"new_key_column\"}\n- Update only target_table: {\"pipelines.target_table\": \"new_table_name\"}\n- Update both: {\"pipelines.keys\": \"id,timestamp\", \"pipelines.target_table\": \"updated_table\"}\n\n**Note:** Provide at least one field to update. Pipeline name cannot have leading/trailing spaces."
+				"description": "Update DLT pipeline configuration (partial update for keys and target_table only).\n\nUpdateable fields:\n- pipelines.keys: Primary key column(s)\n- pipelines.target_table: Target table name\n\nImmutable fields (cannot be changed):\n- pipelines.source_table\n- pipelines.scd_type\n\nAt least one field must be provided.\n\nResponse 200: message, fields_updated\nResponse 400: Invalid request\nResponse 403: Permission denied\nResponse 404: Pipeline not found\nResponse 422: Validation error"
 			},
 			"response": []
 		},
@@ -191,6 +201,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					},
 					{
@@ -213,7 +228,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "libraries"]
 				},
-				"description": "Update DLT pipeline library path and/or root folder path.\n\n**You can update:**\n- library_path: Path to notebook or Python file (must start with /Workspace/ or /Repos/ and end with .py)\n- root_path: Root folder path (must start with /Workspace/ or /Repos/)\n- Both fields together\n\nAt least one field must be provided.\n\nAll other pipeline settings (configuration, catalog, target, storage, etc.) are preserved."
+				"description": "Update DLT pipeline library path and/or root folder path.\n\nUpdateable fields:\n- library_path: Path to notebook/Python file (must start with /Workspace/ or /Repos/ and end with .py)\n- root_path: Root folder path (must start with /Workspace/ or /Repos/)\n\nAt least one field must be provided.\n\nResponse 200: message, library_path, root_path\nResponse 400: Invalid request\nResponse 403: Permission denied\nResponse 404: Pipeline not found\nResponse 422: Validation error"
 			},
 			"response": []
 		},
@@ -225,6 +240,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					},
 					{
@@ -247,7 +267,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "notifications", "add"]
 				},
-				"description": "Add notification recipients to a DLT pipeline. This ADDS to existing notifications (does not replace them).\n\n**The notifications list can include:**\n- Email addresses (e.g., user@example.com)\n- AD group names (e.g., data-engineering-team)\n\nIf a recipient already exists, it will not be duplicated. The response will indicate which recipients were newly added vs. already existing.\n\n**Notifications are sent for:**\n- on-update-failure\n- on-update-fatal-failure\n- on-update-success\n- on-flow-failure"
+				"description": "Add notification recipients to a DLT pipeline. ADDS to existing (does not replace).\n\nAccepts email addresses and AD group names. Duplicates are ignored.\n\nNotifications sent for: on-update-failure, on-update-fatal-failure, on-update-success, on-flow-failure\n\nResponse 200: message, newly_added, already_existing, all_notifications\nResponse 400: Invalid request\nResponse 403: Permission denied\nResponse 404: Pipeline not found"
 			},
 			"response": []
 		},
@@ -259,6 +279,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					},
 					{
@@ -281,7 +306,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "notifications", "remove"]
 				},
-				"description": "Remove specific notification recipients from a DLT pipeline.\n\nAt least one notification recipient must remain after removal. The response will indicate which recipients were removed vs. not found.\n\n**The notifications list can include:**\n- Email addresses (e.g., user@example.com)\n- AD group names (e.g., data-engineering-team)\n\nIf a recipient doesn't exist in the current list, it will be listed as 'not_found' in the response but the operation will still succeed for other recipients."
+				"description": "Remove notification recipients from a DLT pipeline.\n\nAt least one recipient must remain after removal.\n\nResponse 200: message, removed_notifications, not_found, remaining_notifications\nResponse 400: Invalid request\nResponse 403: Permission denied\nResponse 404: Pipeline not found"
 			},
 			"response": []
 		},
@@ -293,6 +318,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					},
 					{
@@ -315,7 +345,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "continuous"]
 				},
-				"description": "Update the continuous mode of a DLT pipeline.\n\n**Continuous mode options:**\n\n**continuous=true:** Pipeline runs continuously, processing data as it arrives\n- Best for streaming data and real-time processing\n- Lower latency but consumes cluster resources continuously\n- Pipeline stays active\n\n**continuous=false:** Pipeline runs in triggered mode\n- Best for batch processing and scheduled jobs\n- Only runs when manually triggered or scheduled\n- More cost-effective for periodic data processing\n- Higher latency but better resource utilization"
+				"description": "Update continuous mode of a DLT pipeline.\n\ncontinuous=true: Pipeline runs continuously (streaming/real-time)\ncontinuous=false: Pipeline runs in triggered mode (batch/scheduled)\n\nResponse 200: message, pipeline_name, continuous, mode\nResponse 400: Invalid request\nResponse 403: Permission denied\nResponse 404: Pipeline not found"
 			},
 			"response": []
 		},
@@ -330,7 +360,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -340,7 +370,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "full-refresh"]
 				},
-				"description": "Perform a full refresh of a DLT pipeline. This will recompute all tables from scratch.\n\n**A full refresh will:**\n- Drop all existing data in target tables\n- Re-read all source data\n- Rebuild all derived tables\n- Recompute all aggregations\n\n**Behavior:**\n- If pipeline is IDLE/STOPPED: Full refresh starts immediately\n- If pipeline is RUNNING/STARTING/STOPPING: Pipeline is stopped first, then full refresh starts\n- Maximum wait time: 10 minutes (600 seconds) for pipeline to stop\n\n**Use cases:**\n- Schema changes requiring data rebuild\n- Data quality issues requiring complete reprocessing\n- Testing with fresh data\n- Recovering from corrupted state\n\n**Warning:** This operation will DELETE all existing data in target tables. The pipeline will be unavailable during the refresh."
+				"description": "Perform a full refresh of a DLT pipeline. Recomputes all tables from scratch.\n\nBehavior:\n- IDLE/STOPPED: Full refresh starts immediately\n- RUNNING/STARTING/STOPPING: Pipeline stopped first, then refresh starts\n- Max wait: 10 minutes (600s) for pipeline to stop\n\nWarning: This will DELETE all existing data in target tables.\n\nResponse 200: message, pipeline_name, action, status\nResponse 400: Invalid pipeline name\nResponse 403: Permission denied\nResponse 404: Pipeline not found\nResponse 408: Timeout waiting for pipeline to stop"
 			},
 			"response": []
 		}

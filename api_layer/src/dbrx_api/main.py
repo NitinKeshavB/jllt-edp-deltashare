@@ -52,6 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Configure logger with Azure/PostgreSQL/Datadog logging if enabled in settings
     configure_logger(
+        dd_service=settings.dd_service,
         enable_blob_logging=settings.enable_blob_logging,
         azure_storage_url=settings.azure_storage_account_url,
         azure_storage_sas_url=settings.azure_storage_sas_url,
@@ -62,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         postgresql_min_level=settings.postgresql_min_log_level,
         enable_datadog_logging=settings.enable_datadog_logging,
         dd_api_key=settings.dd_api_key,
+        dd_env=os.getenv("ENVIRONMENT"),
     )
 
     # Log configuration after logger is configured (so it appears in Datadog)
@@ -71,7 +73,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         account_id_set=bool(settings.account_id),
         blob_logging=settings.enable_blob_logging,
         postgresql_logging=settings.enable_postgresql_logging,
-        datadog_logging=settings.enable_datadog_logging,
+        datadog_logging=settings.enable_datadog_logging and bool(settings.dd_api_key),
+        datadog_api_key_set=bool(settings.dd_api_key),
     )
 
     # Log startup (workspace URL is per-request via X-Workspace-URL header)
@@ -219,13 +222,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Add request context middleware for tracking who/where requests come from
     app.add_middleware(RequestContextMiddleware)
-    app.include_router(ROUTER_HEALTH)
-    app.include_router(ROUTER_CATALOG)
-    app.include_router(ROUTER_RECIPIENT)
-    app.include_router(ROUTER_SHARE)
-    app.include_router(ROUTER_DBRX_PIPELINES)
-    app.include_router(ROUTER_DBRX_SCHEDULE)
-    app.include_router(ROUTER_DBRX_METRICS)
+    app.include_router(ROUTER_HEALTH, prefix="/api")
+    app.include_router(ROUTER_CATALOG, prefix="/api")
+    app.include_router(ROUTER_RECIPIENT, prefix="/api")
+    app.include_router(ROUTER_SHARE, prefix="/api")
+    app.include_router(ROUTER_DBRX_PIPELINES, prefix="/api")
+    app.include_router(ROUTER_DBRX_SCHEDULE, prefix="/api")
+    app.include_router(ROUTER_DBRX_METRICS, prefix="/api")
 
     # Workflow system integration (feature-flagged)
     if settings.enable_workflow and settings.domain_db_connection_string:
@@ -248,7 +251,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             logger.warning("Azure queue not configured - workflow upload will work but processing won't")
 
         # Register workflow router
-        app.include_router(ROUTER_WORKFLOW)
+        app.include_router(ROUTER_WORKFLOW, prefix="/api")
 
         logger.success("Workflow system enabled", queue_enabled=bool(settings.azure_queue_connection_string))
 
@@ -266,7 +269,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
                     from dbrx_api.workflow.queue.queue_consumer import start_queue_consumer
 
-                    asyncio.create_task(start_queue_consumer(app.state.queue_client, app.state.domain_db_pool))
+                    app.state.queue_consumer_task = asyncio.create_task(
+                        start_queue_consumer(app.state.queue_client, app.state.domain_db_pool)
+                    )
                     logger.success("Share pack queue consumer started")
 
         @app.on_event("shutdown")

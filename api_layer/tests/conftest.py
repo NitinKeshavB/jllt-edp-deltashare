@@ -33,6 +33,10 @@ pytest_plugins = [
     "tests.fixtures.logging_fixtures",
     # Business logic mocks
     "tests.fixtures.business_logic_fixtures",
+    # Catalog API fixtures
+    "tests.fixtures.catalog_fixtures",
+    # Workflow API fixtures
+    "tests.fixtures.workflow_fixtures",
     # Example fixture (can be removed if not needed)
     "tests.fixtures.example_fixture",
 ]

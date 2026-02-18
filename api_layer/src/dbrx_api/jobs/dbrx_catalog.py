@@ -12,9 +12,6 @@ except ImportError:
 
 from dbrx_api.dbrx_auth.token_gen import get_auth_token
 from dbrx_api.monitoring.logger import logger
-from dbrx_api.settings import Settings
-
-settings = Settings()
 
 
 def create_catalog(
@@ -209,10 +206,17 @@ def create_catalog(
 
         # Catalog created successfully
         # When created by service principal, it becomes the owner with full privileges
+        try:
+            from dbrx_api.settings import Settings
+
+            _settings = Settings()
+            _client_id = _settings.client_id
+        except Exception:
+            _client_id = "(unknown)"
         logger.info(
             "Catalog created successfully, service principal is owner",
             catalog=catalog_name,
-            service_principal=settings.client_id,
+            service_principal=_client_id,
         )
 
         return {

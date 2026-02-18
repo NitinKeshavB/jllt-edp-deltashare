@@ -8,12 +8,12 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "https://your-api.azurewebsites.net",
+			"value": "https://api-dev.jll.com/udp/dltshr",
 			"type": "string"
 		},
 		{
 			"key": "workspace_url",
-			"value": "https://adb-xxxx.azuredatabricks.net",
+			"value": "https://adb-1234567890123456.12.azuredatabricks.net",
 			"type": "string"
 		},
 		{
@@ -39,7 +39,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -61,7 +61,7 @@
 						}
 					]
 				},
-				"description": "List all recipients with optional prefix filtering and pagination"
+				"description": "List all recipients with optional prefix filtering and pagination.\n\nResponse 200: Message with count + array of RecipientInfo objects"
 			},
 			"response": []
 		},
@@ -76,7 +76,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -86,7 +86,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["recipients", "{{recipient_name}}"]
 				},
-				"description": "Get details of a specific recipient by name. Returns recipient information including authentication type, owner, IP access list (D2O only), and activation details."
+				"description": "Get details of a specific recipient including authentication type, owner, IP access list (D2O only), and activation details.\n\nResponse 200: RecipientInfo object\nResponse 404: Recipient not found"
 			},
 			"response": []
 		},
@@ -101,7 +101,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -114,12 +114,12 @@
 						{
 							"key": "recipient_identifier",
 							"value": "azure:eastus:12345678-1234-1234-1234-123456789012",
-							"description": "Metastore ID in format: cloud:region:uuid (e.g., azure:eastus:xxx, aws:us-west-2:xxx, gcp:us-central1:xxx)"
+							"description": "Metastore ID in format: cloud:region:uuid (e.g., azure:eastus:xxx, aws:us-west-2:xxx)"
 						},
 						{
 							"key": "description",
 							"value": "D2D recipient for partner company",
-							"description": "Description of the recipient"
+							"description": "Description of the recipient (required)"
 						},
 						{
 							"key": "sharing_code",
@@ -128,7 +128,7 @@
 						}
 					]
 				},
-				"description": "Create a Databricks-to-Databricks (D2D) recipient. Uses DATABRICKS authentication type. Requires the recipient's metastore ID in format: cloud:region:uuid. IP access lists are NOT supported for D2D recipients."
+				"description": "Create a Databricks-to-Databricks (D2D) recipient using DATABRICKS authentication.\n\nRequires metastore ID in format cloud:region:uuid. IP access lists NOT supported for D2D.\n\nResponse 201: RecipientInfo\nResponse 400: Invalid parameters\nResponse 409: Already exists"
 			},
 			"response": []
 		},
@@ -143,7 +143,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -156,16 +156,16 @@
 						{
 							"key": "description",
 							"value": "D2O recipient for external partner",
-							"description": "Description of the recipient"
+							"description": "Description of the recipient (required)"
 						},
 						{
 							"key": "ip_access_list",
 							"value": "192.168.1.100,10.0.0.0/24,172.16.0.0/12",
-							"description": "Comma-delimited list of IP addresses or CIDR blocks (e.g., '192.168.1.1,10.0.0.0/24'). Optional."
+							"description": "Comma-delimited list of IP addresses or CIDR blocks (optional)"
 						}
 					]
 				},
-				"description": "Create a Databricks-to-Open (D2O) recipient with TOKEN authentication. Supports comma-delimited IP access list for restricting access. Returns activation URL and access token for the recipient to use."
+				"description": "Create a D2O recipient with TOKEN authentication. Returns activation URL and access token.\n\nResponse 201: RecipientInfo with activation URL and token\nResponse 400: Invalid parameters\nResponse 409: Already exists"
 			},
 			"response": []
 		},
@@ -180,7 +180,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -190,7 +190,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["recipients", "{{recipient_name}}"]
 				},
-				"description": "Delete a recipient by name. User must be the owner. This will permanently remove the recipient and revoke all access tokens."
+				"description": "Delete a recipient by name. User must be the owner. Revokes all access tokens.\n\nResponse 200: Deleted Recipient successfully!\nResponse 403: Permission denied\nResponse 404: Recipient not found"
 			},
 			"response": []
 		},
@@ -205,7 +205,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -218,11 +218,11 @@
 						{
 							"key": "expire_in_seconds",
 							"value": "0",
-							"description": "Time in seconds until new token expires (0 = no expiration). Must be non-negative."
+							"description": "Time in seconds until new token expires (0 = no expiration, default: 0)"
 						}
 					]
 				},
-				"description": "Rotate the access token for a D2O recipient. Only works with TOKEN authentication type (D2O recipients). Returns new token and activation URL. Note: Recipients have a maximum number of active tokens allowed."
+				"description": "Rotate access token for D2O recipient. Only works with TOKEN authentication.\n\nResponse 200: RecipientInfo with new token\nResponse 400: Invalid params or D2D recipient\nResponse 403: Permission denied\nResponse 404: Not found"
 			},
 			"response": []
 		},
@@ -237,7 +237,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -250,11 +250,11 @@
 						{
 							"key": "ip_access_list",
 							"value": "203.0.113.10,198.51.100.0/24,192.0.2.1",
-							"description": "Comma-delimited list of IP addresses or CIDR blocks to add (e.g., '192.168.1.1,10.0.0.0/24')"
+							"description": "Comma-delimited list of IP addresses or CIDR blocks to add (required)"
 						}
 					]
 				},
-				"description": "Add IP addresses or CIDR blocks to a D2O recipient's allow list. Accepts comma-delimited list of IPs and CIDR blocks. Only works with TOKEN authentication (D2O recipients). Each IP is validated before adding."
+				"description": "Add IP addresses or CIDR blocks to a D2O recipient's allow list.\n\nResponse 200: Updated RecipientInfo\nResponse 400: Invalid IP or D2D recipient\nResponse 403: Permission denied\nResponse 404: Not found"
 			},
 			"response": []
 		},
@@ -269,7 +269,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -282,11 +282,11 @@
 						{
 							"key": "ip_access_list",
 							"value": "203.0.113.10,198.51.100.0/24",
-							"description": "Comma-delimited list of IP addresses or CIDR blocks to revoke (e.g., '192.168.1.1,10.0.0.0/24')"
+							"description": "Comma-delimited list of IP addresses or CIDR blocks to revoke (required)"
 						}
 					]
 				},
-				"description": "Remove IP addresses or CIDR blocks from a D2O recipient's allow list. Accepts comma-delimited list. IPs must exist in current list to be revoked. Only works with TOKEN authentication (D2O recipients)."
+				"description": "Remove IP addresses or CIDR blocks from a D2O recipient's allow list.\n\nResponse 200: Updated RecipientInfo\nResponse 400: Invalid IP or D2D recipient\nResponse 403: Permission denied\nResponse 404: Not found"
 			},
 			"response": []
 		},
@@ -301,7 +301,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -314,11 +314,11 @@
 						{
 							"key": "description",
 							"value": "Updated description for the recipient",
-							"description": "New description (cannot be empty or contain only spaces/quotes)"
+							"description": "New description (required, cannot be empty)"
 						}
 					]
 				},
-				"description": "Update the description of a recipient. User must be the owner. Description cannot be empty or contain only spaces and quotes."
+				"description": "Update the description of a recipient. User must be the owner.\n\nResponse 200: Updated RecipientInfo\nResponse 400: Invalid description\nResponse 403: Permission denied\nResponse 404: Not found"
 			},
 			"response": []
 		},
@@ -333,7 +333,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -346,11 +346,11 @@
 						{
 							"key": "expiration_time_in_days",
 							"value": "90",
-							"description": "Number of days until expiration (must be positive integer)"
+							"description": "Number of days until expiration (required, must be positive integer)"
 						}
 					]
 				},
-				"description": "Update the expiration time for a D2O recipient's tokens. Only works with TOKEN authentication type (D2O recipients). User must be the owner. Expiration time must be a positive integer."
+				"description": "Update expiration time for a D2O recipient's tokens. Only works with TOKEN auth.\n\nResponse 200: Updated RecipientInfo\nResponse 400: Invalid value or D2D recipient\nResponse 403: Permission denied\nResponse 404: Not found"
 			},
 			"response": []
 		}

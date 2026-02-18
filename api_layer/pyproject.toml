@@ -26,11 +26,11 @@ dynamic = ["version"]
 
 # docs: https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html#dynamic-metadata
 [tool.setuptools.dynamic]
-version = { file = "version.txt" }
+version = { file = "api_layer/version.txt" }
 
 # Package discovery for src/ layout
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["api_layer/src"]
 
 # optional dependencies can be installed with square brackets, e.g. `pip install my-package[test,static-code-qa]`
 [project.optional-dependencies]
@@ -41,6 +41,7 @@ azure = [
     "azure-identity",
     "asyncpg",
 ]
+datadog = ["aiohttp"]
 workflow = [
     "pyyaml>=6.0",
     "openpyxl>=3.1",
@@ -55,6 +56,7 @@ test = [
     "httpx",
     "pytest-asyncio",
     "uvicorn",
+    "python-multipart",
 ]
 release = ["build", "twine"]
 static-code-qa = [
@@ -74,7 +76,7 @@ static-code-qa = [
 # - automatically apply formatting
 # - show enhanced autocompletion for stubs libraries
 # See .vscode/settings.json to see how VS Code is configured to use these tools
-dev = ["jllt-edp-deltashare[azure,dbrx,api,workflow,test,release,static-code-qa]"]
+dev = ["jllt-edp-deltashare[azure,dbrx,api,workflow,datadog,test,release,static-code-qa]"]
 
 [build-system]
 # Minimum requirements for the build system to execute.
@@ -96,6 +98,10 @@ testpaths = ["api_layer/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+filterwarnings = [
+    "ignore:on_event is deprecated:DeprecationWarning",
+    "ignore:Support for class-based .* config.*:pydantic.PydanticDeprecatedSince20",
+]
 addopts = [
     "--verbose",
     "--cov=api_layer/src/dbrx_api",

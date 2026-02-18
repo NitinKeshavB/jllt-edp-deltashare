@@ -8,7 +8,7 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "https://your-api.azurewebsites.net",
+			"value": "https://api-dev.jll.com/udp/dltshr",
 			"type": "string"
 		},
 		{
@@ -35,10 +35,10 @@
 						"description": "Databricks workspace URL"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text",
-						"description": "Azure API Management subscription key"
+						"description": "API subscription key"
 					}
 				],
 				"url": {
@@ -46,7 +46,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["health"]
 				},
-				"description": "Check the health status of the Delta Share API service. Returns service version, timestamp, and connection status."
+				"description": "Check the health status of the Delta Share API service. Returns service version, timestamp, and connection status.\n\nResponse 200:\n- status: healthy\n- timestamp: ISO datetime\n- service: Delta Share API\n- version: v1\n- workspace_url: configured workspace URL"
 			},
 			"response": []
 		},
@@ -62,10 +62,10 @@
 						"description": "Databricks workspace URL"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text",
-						"description": "Azure API Management subscription key"
+						"description": "API subscription key"
 					}
 				],
 				"url": {
@@ -73,7 +73,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["health", "logging", "test"]
 				},
-				"description": "Test the logging system (Azure Blob Storage, PostgreSQL, Datadog) to ensure logs are being written correctly."
+				"description": "Test the logging system (Azure Blob Storage, PostgreSQL, Datadog) to ensure logs are being written correctly.\n\nResponse 200: Test result with success flag, blob name\nResponse 503: Blob Storage not configured or unreachable"
 			},
 			"response": []
 		}

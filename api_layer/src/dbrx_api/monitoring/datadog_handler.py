@@ -4,6 +4,7 @@ import json
 import os
 import traceback
 from datetime import timezone
+from pathlib import Path
 from typing import Any
 from typing import Optional
 
@@ -16,8 +17,8 @@ class DatadogLogHandler:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        service_name: str = "deltashare-api",
+        api_key: str,
+        service_name: str,
         env: Optional[str] = None,
         site: str = "us3.datadoghq.com",
     ):
@@ -25,13 +26,19 @@ class DatadogLogHandler:
         Initialize Datadog handler.
 
         Args:
-            api_key: Datadog API key (reads from DD_API_KEY env var)
-            service_name: Service name (defaults to deltashare-api)
-            env: Environment name (reads from ENVIRONMENT env var)
+            api_key: Datadog API key (required)
+            service_name: Service name (required, should be passed from settings)
+            env: Environment name (auto-detected if not provided)
             site: Datadog site (defaults to us3.datadoghq.com)
         """
-        self.api_key = api_key or os.getenv("DD_API_KEY")
-        self.env = env if env is not None else os.getenv("ENVIRONMENT", "unknown")
+        self.api_key = api_key
+
+        # Auto-detect environment if not provided
+        if env is not None:
+            self.env = env
+        else:
+            # Check if .env file exists for local development
+            self.env = "local" if Path(".env").exists() else os.getenv("ENVIRONMENT", "unknown")
         self.service_name = service_name
         self.site = site
         self._session: Optional[aiohttp.ClientSession] = None
@@ -42,11 +49,11 @@ class DatadogLogHandler:
     def _initialize_datadog(self) -> None:
         """Initialize Datadog HTTP session."""
         if not self.api_key:
-            logger.warning("DD_API_KEY not set - Datadog logging will be disabled")
+            logger.warning("Datadog API key not provided - Datadog logging will be disabled")
             return
 
         if not self.service_name:
-            logger.warning("DD_SERVICE not set - Datadog logging will be disabled")
+            logger.warning("Datadog service name not provided - Datadog logging will be disabled")
             return
 
         try:

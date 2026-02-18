@@ -94,6 +94,64 @@ def get_shares(share_name: str, dltshr_workspace_url: str):
         return None
 
 
+def get_share_recipients(share_name: str, dltshr_workspace_url: str) -> List[str]:
+    """Get list of recipient names (principals) with access to the share.
+
+    Args:
+        share_name: Share name
+        dltshr_workspace_url: Databricks workspace URL
+
+    Returns:
+        List of recipient/principal names; empty list if none or on error
+    """
+    try:
+        session_token = get_auth_token(datetime.now(timezone.utc))[0]
+        w_client = WorkspaceClient(host=dltshr_workspace_url, token=session_token)
+        perms = w_client.shares.share_permissions(name=share_name)
+        if not perms or not getattr(perms, "privilege_assignments", None):
+            return []
+        return [a.principal for a in (perms.privilege_assignments or []) if getattr(a, "principal", None)]
+    except Exception as e:
+        logger.warning("Error getting share recipients", share_name=share_name, error=str(e))
+        return []
+
+
+def get_share_objects(share_name: str, dltshr_workspace_url: str) -> dict:
+    """Get current shared data objects (tables, views, schemas) for a share.
+
+    Args:
+        share_name: Share name
+        dltshr_workspace_url: Databricks workspace URL
+
+    Returns:
+        Dict with keys 'tables', 'views', 'schemas' (lists of qualified names).
+        Empty lists if share has no shared data or on error.
+    """
+    out: dict = {"tables": [], "views": [], "schemas": []}
+    try:
+        session_token = get_auth_token(datetime.now(timezone.utc))[0]
+        w_client = WorkspaceClient(host=dltshr_workspace_url, token=session_token)
+        share_info = w_client.shares.get(name=share_name, include_shared_data=True)
+        objs = getattr(share_info, "shared_data_objects", None) or getattr(share_info, "objects", None)
+        if not share_info or not objs:
+            return out
+        for obj in objs or []:
+            name = getattr(obj, "name", None)
+            dtype = getattr(obj, "data_object_type", None)
+            if not name:
+                continue
+            if dtype == SharedDataObjectDataObjectType.TABLE:
+                out["tables"].append(name)
+            elif dtype == SharedDataObjectDataObjectType.VIEW:
+                out["views"].append(name)
+            elif dtype == SharedDataObjectDataObjectType.SCHEMA:
+                out["schemas"].append(name)
+        return out
+    except Exception as e:
+        logger.warning("Error getting share objects", share_name=share_name, error=str(e))
+        return out
+
+
 def create_share(
     dltshr_workspace_url: str,
     share_name: str,
@@ -150,6 +208,33 @@ def create_share(
             raise
 
     return response
+
+
+def update_share_description(
+    dltshr_workspace_url: str,
+    share_name: str,
+    description: str,
+) -> None:
+    """Update the description/comment on an existing share in Databricks.
+
+    Args:
+        dltshr_workspace_url: Databricks workspace URL
+        share_name: Share name
+        description: New description/comment for the share
+
+    Returns:
+        None on success, error message string on failure
+    """
+    try:
+        session_token = get_auth_token(datetime.now(timezone.utc))[0]
+        w_client = WorkspaceClient(host=dltshr_workspace_url, token=session_token)
+        w_client.shares.update(name=share_name, comment=description)
+        logger.info(f"Updated share description for '{share_name}'")
+        return None
+    except Exception as e:
+        err_msg = str(e)
+        logger.warning(f"Failed to update share description for '{share_name}': {err_msg}")
+        return f"Failed to update share description: {err_msg}"
 
 
 def add_data_object_to_share(

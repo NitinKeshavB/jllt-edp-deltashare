@@ -4,13 +4,15 @@ from unittest.mock import patch
 
 from fastapi import status
 
+from tests.consts import API_BASE
+
 
 class TestScheduleAuthenticationHeaders:
     """Tests for required authentication headers on Schedule endpoints."""
 
     def test_missing_workspace_url_header(self, unauthenticated_client):
         """Test that requests without X-Workspace-URL header are rejected."""
-        response = unauthenticated_client.get("/schedules")
+        response = unauthenticated_client.get(f"{API_BASE}/schedules")
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
@@ -26,7 +28,7 @@ class TestListAllSchedulesEndpoint:
         with patch("dbrx_api.routes.routes_schedule.list_schedules_sdk") as mock_list:
             mock_list.return_value = (sample_schedule_list, None)
 
-            response = client.get("/schedules")
+            response = client.get(f"{API_BASE}/schedules")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -46,7 +48,7 @@ class TestListAllSchedulesEndpoint:
                 (sample_schedule_list[2:], None),
             ]
 
-            response = client.get("/schedules")
+            response = client.get(f"{API_BASE}/schedules")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -67,7 +69,7 @@ class TestListAllSchedulesEndpoint:
         with patch("dbrx_api.routes.routes_schedule.list_schedules_sdk") as mock_list:
             mock_list.return_value = (sample_schedule_list, None)
 
-            response = client.get("/schedules?page_size=50")
+            response = client.get(f"{API_BASE}/schedules?page_size=50")
 
             assert response.status_code == status.HTTP_200_OK
             # Verify SDK was called with custom page_size (max_results)
@@ -77,7 +79,7 @@ class TestListAllSchedulesEndpoint:
 
     def test_list_all_schedules_invalid_page_size(self, client):
         """Test that page_size=-1 is no longer valid."""
-        response = client.get("/schedules?page_size=-1")
+        response = client.get(f"{API_BASE}/schedules?page_size=-1")
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
@@ -95,7 +97,7 @@ class TestListAllSchedulesEndpoint:
             mock_search.return_value = [mock_pipeline_for_schedule]
             mock_list.return_value = (sample_schedule_list[:1], None)
 
-            response = client.get("/schedules?pipeline_name_search_string=test-pipeline")
+            response = client.get(f"{API_BASE}/schedules?pipeline_name_search_string=test-pipeline")
 
             assert response.status_code == status.HTTP_200_OK
 
@@ -108,7 +110,7 @@ class TestListAllSchedulesEndpoint:
             # Mock list_schedules_sdk to avoid real API calls (shouldn't be called but defensive)
             mock_list.return_value = ([], None)
 
-            response = client.get("/schedules?pipeline_name_search_string=nonexistent")
+            response = client.get(f"{API_BASE}/schedules?pipeline_name_search_string=nonexistent")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -134,7 +136,7 @@ class TestListSchedulesForPipelineEndpoint:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
             mock_list.return_value = (sample_schedule_list, None)
 
-            response = client.get("/schedules/pipeline/test-pipeline")
+            response = client.get(f"{API_BASE}/schedules/pipeline/test-pipeline")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -163,7 +165,7 @@ class TestListSchedulesForPipelineEndpoint:
                 (sample_schedule_list[2:], None),
             ]
 
-            response = client.get("/schedules/pipeline/test-pipeline")
+            response = client.get(f"{API_BASE}/schedules/pipeline/test-pipeline")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -185,7 +187,7 @@ class TestListSchedulesForPipelineEndpoint:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
             mock_list.return_value = ([], None)
 
-            response = client.get("/schedules/pipeline/test-pipeline")
+            response = client.get(f"{API_BASE}/schedules/pipeline/test-pipeline")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -197,7 +199,7 @@ class TestListSchedulesForPipelineEndpoint:
         with patch("dbrx_api.routes.routes_schedule.get_pipeline_by_name_sdk") as mock_get_pipeline:
             mock_get_pipeline.return_value = None
 
-            response = client.get("/schedules/pipeline/nonexistent-pipeline")
+            response = client.get(f"{API_BASE}/schedules/pipeline/nonexistent-pipeline")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
             assert "not found" in response.json()["detail"].lower()
@@ -207,7 +209,7 @@ class TestListSchedulesForPipelineEndpoint:
         with patch("dbrx_api.routes.routes_schedule.get_pipeline_by_name_sdk") as mock_get_pipeline:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
 
-            response = client.get("/schedules/pipeline/test-pipeline?page_size=-1")
+            response = client.get(f"{API_BASE}/schedules/pipeline/test-pipeline?page_size=-1")
 
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
@@ -232,7 +234,7 @@ class TestCreateScheduleEndpoint:
             mock_create.return_value = "Schedule created successfully"
 
             response = client.post(
-                "/pipelines/test-pipeline/schedules",
+                f"{API_BASE}/pipelines/test-pipeline/schedules",
                 json=sample_create_schedule_request,
             )
 
@@ -258,7 +260,7 @@ class TestCreateScheduleEndpoint:
             mock_create.return_value = "Schedule created successfully"
 
             response = client.post(
-                "/pipelines/test-pipeline/schedules",
+                f"{API_BASE}/pipelines/test-pipeline/schedules",
                 json=sample_create_schedule_request_minimal,
             )
 
@@ -274,7 +276,7 @@ class TestCreateScheduleEndpoint:
             mock_get_pipeline.return_value = None
 
             response = client.post(
-                "/pipelines/nonexistent-pipeline/schedules",
+                f"{API_BASE}/pipelines/nonexistent-pipeline/schedules",
                 json=sample_create_schedule_request,
             )
 
@@ -298,7 +300,7 @@ class TestCreateScheduleEndpoint:
             mock_list.return_value = ([existing_schedule], None)
 
             response = client.post(
-                "/pipelines/test-pipeline/schedules",
+                f"{API_BASE}/pipelines/test-pipeline/schedules",
                 json=sample_create_schedule_request,
             )
 
@@ -322,7 +324,7 @@ class TestCreateScheduleEndpoint:
             mock_create.return_value = "Job already exists: new-schedule-job"
 
             response = client.post(
-                "/pipelines/test-pipeline/schedules",
+                f"{API_BASE}/pipelines/test-pipeline/schedules",
                 json=sample_create_schedule_request,
             )
 
@@ -334,7 +336,7 @@ class TestCreateScheduleEndpoint:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
 
             response = client.post(
-                "/pipelines/test-pipeline/schedules",
+                f"{API_BASE}/pipelines/test-pipeline/schedules",
                 json={
                     "job_name": "test-job",
                     "cron_expression": "invalid cron",
@@ -349,7 +351,7 @@ class TestCreateScheduleEndpoint:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
 
             response = client.post(
-                "/pipelines/test-pipeline/schedules",
+                f"{API_BASE}/pipelines/test-pipeline/schedules",
                 json={
                     "job_name": "invalid@job#name!",
                     "cron_expression": "0 0 12 * * ?",
@@ -361,7 +363,7 @@ class TestCreateScheduleEndpoint:
     def test_create_schedule_missing_required_fields(self, client):
         """Test creating schedule without required fields."""
         response = client.post(
-            "/pipelines/test-pipeline/schedules",
+            f"{API_BASE}/pipelines/test-pipeline/schedules",
             json={},
         )
 
@@ -389,7 +391,9 @@ class TestUpdateCronExpressionEndpoint:
             mock_list.return_value = ([schedule], None)
             mock_update.return_value = "Schedule updated successfully"
 
-            response = client.patch("/pipelines/test-pipeline/schedules/test-job/cron?cron_expression=0 0 6 * * ?")
+            response = client.patch(
+                f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/cron?cron_expression=0 0 6 * * ?"
+            )
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -401,7 +405,7 @@ class TestUpdateCronExpressionEndpoint:
             mock_get_pipeline.return_value = None
 
             response = client.patch(
-                "/pipelines/nonexistent-pipeline/schedules/test-job/cron?cron_expression=0 0 6 * * ?"
+                f"{API_BASE}/pipelines/nonexistent-pipeline/schedules/test-job/cron?cron_expression=0 0 6 * * ?"
             )
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -420,7 +424,7 @@ class TestUpdateCronExpressionEndpoint:
             mock_list.return_value = ([], None)
 
             response = client.patch(
-                "/pipelines/test-pipeline/schedules/nonexistent-job/cron?cron_expression=0 0 6 * * ?"
+                f"{API_BASE}/pipelines/test-pipeline/schedules/nonexistent-job/cron?cron_expression=0 0 6 * * ?"
             )
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -434,7 +438,9 @@ class TestUpdateCronExpressionEndpoint:
         with patch("dbrx_api.routes.routes_schedule.get_pipeline_by_name_sdk") as mock_get_pipeline:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
 
-            response = client.patch("/pipelines/test-pipeline/schedules/test-job/cron?cron_expression=invalid")
+            response = client.patch(
+                f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/cron?cron_expression=invalid"
+            )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -456,7 +462,7 @@ class TestUpdateCronExpressionEndpoint:
             mock_list.return_value = ([schedule], None)
 
             response = client.patch(
-                f"/pipelines/test-pipeline/schedules/test-job/cron?cron_expression={existing_cron}"
+                f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/cron?cron_expression={existing_cron}"
             )
 
             assert response.status_code == status.HTTP_409_CONFLICT
@@ -484,7 +490,9 @@ class TestUpdateTimezoneEndpoint:
             mock_list.return_value = ([schedule], None)
             mock_update.return_value = "Timezone updated successfully"
 
-            response = client.patch("/pipelines/test-pipeline/schedules/test-job/timezone?time_zone=America/New_York")
+            response = client.patch(
+                f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/timezone?time_zone=America/New_York"
+            )
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -509,7 +517,7 @@ class TestUpdateTimezoneEndpoint:
             mock_list.return_value = ([schedule], None)
             mock_update.return_value = "Timezone updated successfully"
 
-            response = client.patch("/pipelines/test-pipeline/schedules/test-job/timezone")
+            response = client.patch(f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/timezone")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -520,7 +528,9 @@ class TestUpdateTimezoneEndpoint:
         with patch("dbrx_api.routes.routes_schedule.get_pipeline_by_name_sdk") as mock_get_pipeline:
             mock_get_pipeline.return_value = None
 
-            response = client.patch("/pipelines/nonexistent-pipeline/schedules/test-job/timezone?time_zone=UTC")
+            response = client.patch(
+                f"{API_BASE}/pipelines/nonexistent-pipeline/schedules/test-job/timezone?time_zone=UTC"
+            )
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -537,7 +547,9 @@ class TestUpdateTimezoneEndpoint:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
             mock_list.return_value = ([], None)
 
-            response = client.patch("/pipelines/test-pipeline/schedules/nonexistent-job/timezone?time_zone=UTC")
+            response = client.patch(
+                f"{API_BASE}/pipelines/test-pipeline/schedules/nonexistent-job/timezone?time_zone=UTC"
+            )
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -559,7 +571,7 @@ class TestUpdateTimezoneEndpoint:
             mock_list.return_value = ([schedule], None)
 
             response = client.patch(
-                f"/pipelines/test-pipeline/schedules/test-job/timezone?time_zone={existing_timezone}"
+                f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/timezone?time_zone={existing_timezone}"
             )
 
             assert response.status_code == status.HTTP_409_CONFLICT
@@ -581,7 +593,7 @@ class TestUpdateTimezoneEndpoint:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
             mock_list.return_value = ([schedule], None)
 
-            response = client.patch("/pipelines/test-pipeline/schedules/test-job/timezone?time_zone=UTC")
+            response = client.patch(f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/timezone?time_zone=UTC")
 
             assert response.status_code == status.HTTP_409_CONFLICT
             assert "already has timezone" in response.json()["detail"].lower()
@@ -598,12 +610,14 @@ class TestDeleteScheduleEndpoint:
         """Test successfully deleting a schedule."""
         with (
             patch("dbrx_api.routes.routes_schedule.get_pipeline_by_name_sdk") as mock_get_pipeline,
+            patch("dbrx_api.routes.routes_schedule.list_schedules_sdk") as mock_list,
             patch("dbrx_api.routes.routes_schedule.delete_schedule_for_pipeline_sdk") as mock_delete,
         ):
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
+            mock_list.return_value = ([{"job_name": "test-job", "job_id": "job-123"}], None)
             mock_delete.return_value = "Schedule deleted successfully"
 
-            response = client.delete("/pipelines/test-pipeline/schedules/test-job")
+            response = client.delete(f"{API_BASE}/pipelines/test-pipeline/schedules/test-job")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -617,12 +631,14 @@ class TestDeleteScheduleEndpoint:
         """Test deleting non-existent schedule."""
         with (
             patch("dbrx_api.routes.routes_schedule.get_pipeline_by_name_sdk") as mock_get_pipeline,
+            patch("dbrx_api.routes.routes_schedule.list_schedules_sdk") as mock_list,
             patch("dbrx_api.routes.routes_schedule.delete_schedule_for_pipeline_sdk") as mock_delete,
         ):
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
+            mock_list.return_value = ([{"job_name": "test-job", "job_id": "job-123"}], None)
             mock_delete.return_value = "Job not found: test-job"
 
-            response = client.delete("/pipelines/test-pipeline/schedules/test-job")
+            response = client.delete(f"{API_BASE}/pipelines/test-pipeline/schedules/test-job")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -634,12 +650,14 @@ class TestDeleteScheduleEndpoint:
         """Test deleting schedule with permission denied."""
         with (
             patch("dbrx_api.routes.routes_schedule.get_pipeline_by_name_sdk") as mock_get_pipeline,
+            patch("dbrx_api.routes.routes_schedule.list_schedules_sdk") as mock_list,
             patch("dbrx_api.routes.routes_schedule.delete_schedule_for_pipeline_sdk") as mock_delete,
         ):
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
+            mock_list.return_value = ([{"job_name": "test-job", "job_id": "job-123"}], None)
             mock_delete.return_value = "Permission denied: not an owner"
 
-            response = client.delete("/pipelines/test-pipeline/schedules/test-job")
+            response = client.delete(f"{API_BASE}/pipelines/test-pipeline/schedules/test-job")
 
             assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -648,7 +666,7 @@ class TestDeleteScheduleEndpoint:
         with patch("dbrx_api.routes.routes_schedule.get_pipeline_by_name_sdk") as mock_get_pipeline:
             mock_get_pipeline.return_value = None
 
-            response = client.delete("/pipelines/nonexistent-pipeline/schedules/test-job")
+            response = client.delete(f"{API_BASE}/pipelines/nonexistent-pipeline/schedules/test-job")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -669,7 +687,7 @@ class TestDeleteAllSchedulesEndpoint:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
             mock_delete.return_value = "Deleted 3 schedule(s)"
 
-            response = client.delete("/pipelines/test-pipeline/schedules")
+            response = client.delete(f"{API_BASE}/pipelines/test-pipeline/schedules")
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -688,7 +706,7 @@ class TestDeleteAllSchedulesEndpoint:
             mock_get_pipeline.return_value = mock_pipeline_for_schedule
             mock_delete.return_value = "No schedules found for pipeline"
 
-            response = client.delete("/pipelines/test-pipeline/schedules")
+            response = client.delete(f"{API_BASE}/pipelines/test-pipeline/schedules")
 
             assert response.status_code == status.HTTP_200_OK
 
@@ -697,7 +715,7 @@ class TestDeleteAllSchedulesEndpoint:
         with patch("dbrx_api.routes.routes_schedule.get_pipeline_by_name_sdk") as mock_get_pipeline:
             mock_get_pipeline.return_value = None
 
-            response = client.delete("/pipelines/nonexistent-pipeline/schedules")
+            response = client.delete(f"{API_BASE}/pipelines/nonexistent-pipeline/schedules")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -726,7 +744,7 @@ class TestCreateScheduleRequestValidation:
                 mock_create.return_value = "Schedule created successfully"
 
                 response = client.post(
-                    "/pipelines/test-pipeline/schedules",
+                    f"{API_BASE}/pipelines/test-pipeline/schedules",
                     json={"job_name": "test-job", "cron_expression": cron},
                 )
 
@@ -746,7 +764,7 @@ class TestCreateScheduleRequestValidation:
 
             for cron in invalid_crons:
                 response = client.post(
-                    "/pipelines/test-pipeline/schedules",
+                    f"{API_BASE}/pipelines/test-pipeline/schedules",
                     json={"job_name": "test-job", "cron_expression": cron},
                 )
 
@@ -773,7 +791,7 @@ class TestCreateScheduleRequestValidation:
                 mock_create.return_value = "Schedule created successfully"
 
                 response = client.post(
-                    "/pipelines/test-pipeline/schedules",
+                    f"{API_BASE}/pipelines/test-pipeline/schedules",
                     json={"job_name": name, "cron_expression": "0 0 12 * * ?"},
                 )
 
@@ -794,7 +812,7 @@ class TestCreateScheduleRequestValidation:
 
             for name in invalid_names:
                 response = client.post(
-                    "/pipelines/test-pipeline/schedules",
+                    f"{API_BASE}/pipelines/test-pipeline/schedules",
                     json={"job_name": name, "cron_expression": "0 0 12 * * ?"},
                 )
 
@@ -821,7 +839,7 @@ class TestScheduleErrorHandling:
             mock_create.return_value = "Error: Failed to create schedule due to network issue"
 
             response = client.post(
-                "/pipelines/test-pipeline/schedules",
+                f"{API_BASE}/pipelines/test-pipeline/schedules",
                 json=sample_create_schedule_request,
             )
 
@@ -846,7 +864,9 @@ class TestScheduleErrorHandling:
             mock_list.return_value = ([schedule], None)
             mock_update.return_value = "Permission denied: User is not the owner of this job"
 
-            response = client.patch("/pipelines/test-pipeline/schedules/test-job/cron?cron_expression=0 0 6 * * ?")
+            response = client.patch(
+                f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/cron?cron_expression=0 0 6 * * ?"
+            )
 
             assert response.status_code == status.HTTP_403_FORBIDDEN
             assert "permission denied" in response.json()["detail"].lower()
@@ -869,7 +889,9 @@ class TestScheduleErrorHandling:
             mock_list.return_value = ([schedule], None)
             mock_update.return_value = "Error: Failed to update schedule"
 
-            response = client.patch("/pipelines/test-pipeline/schedules/test-job/cron?cron_expression=0 0 6 * * ?")
+            response = client.patch(
+                f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/cron?cron_expression=0 0 6 * * ?"
+            )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
             assert "error" in response.json()["detail"].lower()
@@ -892,7 +914,7 @@ class TestScheduleErrorHandling:
             mock_list.return_value = ([schedule], None)
             mock_update.return_value = "Permission denied: User is not the owner of this job"
 
-            response = client.patch("/pipelines/test-pipeline/schedules/test-job/timezone?time_zone=UTC")
+            response = client.patch(f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/timezone?time_zone=UTC")
 
             assert response.status_code == status.HTTP_403_FORBIDDEN
             assert "permission denied" in response.json()["detail"].lower()
@@ -915,7 +937,7 @@ class TestScheduleErrorHandling:
             mock_list.return_value = ([schedule], None)
             mock_update.return_value = "Error: Failed to update timezone"
 
-            response = client.patch("/pipelines/test-pipeline/schedules/test-job/timezone?time_zone=UTC")
+            response = client.patch(f"{API_BASE}/pipelines/test-pipeline/schedules/test-job/timezone?time_zone=UTC")
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
             assert "error" in response.json()["detail"].lower()

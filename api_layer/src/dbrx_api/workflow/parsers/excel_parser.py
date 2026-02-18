@@ -54,11 +54,17 @@ def parse_excel(file_content: Union[bytes, BinaryIO]) -> SharePackConfig:
     # Parse Metadata sheet
     metadata_dict = _parse_metadata_sheet(wb)
 
-    # Parse Recipients sheet
-    recipients = _parse_recipients_sheet(wb)
+    # Parse Recipients sheet (optional when shares-only)
+    if "Recipients" in wb.sheetnames:
+        recipients = _parse_recipients_sheet(wb)
+    else:
+        recipients = []
 
-    # Parse Shares sheet
-    shares = _parse_shares_sheet(wb)
+    # Parse Shares sheet (optional when recipients-only)
+    if "Shares" in wb.sheetnames:
+        shares = _parse_shares_sheet(wb)
+    else:
+        shares = []
 
     # Parse Pipelines sheet (optional)
     pipelines_by_share = _parse_pipelines_sheet(wb)
@@ -77,6 +83,17 @@ def parse_excel(file_content: Union[bytes, BinaryIO]) -> SharePackConfig:
         "recipient": recipients,
         "share": shares,
     }
+
+    # Normalize name-only config when strategy is DELETE
+    from dbrx_api.workflow.parsers.parser_factory import normalize_config_for_delete
+
+    config_dict = normalize_config_for_delete(config_dict)
+
+    if not recipients and not shares:
+        raise ValueError(
+            "Excel must contain at least one of: Recipients sheet or Shares sheet. "
+            "You can pass recipients alone, shares alone, or schedules alone."
+        )
 
     # Validate and convert to SharePackConfig
     try:
@@ -107,10 +124,7 @@ def _parse_metadata_sheet(wb) -> dict:
 
 
 def _parse_recipients_sheet(wb) -> list:
-    """Parse Recipients sheet."""
-    if "Recipients" not in wb.sheetnames:
-        raise ValueError("Missing required sheet: Recipients")
-
+    """Parse Recipients sheet. Call only when 'Recipients' sheet is present."""
     sheet = wb["Recipients"]
     headers = [cell.value for cell in sheet[1]]  # First row is header
 
@@ -157,10 +171,7 @@ def _parse_recipients_sheet(wb) -> list:
 
 
 def _parse_shares_sheet(wb) -> list:
-    """Parse Shares sheet (grouped by share_name)."""
-    if "Shares" not in wb.sheetnames:
-        raise ValueError("Missing required sheet: Shares")
-
+    """Parse Shares sheet (grouped by share_name). Call only when 'Shares' sheet is present."""
     sheet = wb["Shares"]
     headers = [cell.value for cell in sheet[1]]
 
@@ -255,8 +266,9 @@ def _parse_pipelines_sheet(wb) -> dict:
             continue
 
         # Build pipeline config
-        # Schedule is per-asset: {asset_name: {cron: ..., timezone: ...} or "continuous"}
+        # source_asset: required for validation (share_assets must have matching pipeline)
         asset_name = row_dict.get("asset_name", "")
+        source_asset = str(row_dict.get("source_asset", "")).strip() or (str(asset_name).strip() if asset_name else "")
         schedule_type = row_dict.get("schedule_type", "CRON").upper()
 
         if schedule_type == "CONTINUOUS":
@@ -267,9 +279,11 @@ def _parse_pipelines_sheet(wb) -> dict:
                 "timezone": row_dict.get("timezone", "UTC"),
             }
 
+        schedule_key = source_asset or asset_name or "default"
         pipeline = {
             "name_prefix": row_dict.get("name_prefix", "pipeline"),
-            "schedule": {asset_name: schedule_value},
+            "source_asset": source_asset or asset_name,
+            "schedule": {schedule_key: schedule_value},
             "notification": [n.strip() for n in row_dict.get("notification", "").split(",") if n.strip()],
             "tags": dict(item.split(":") for item in row_dict.get("tags", "").split(",") if ":" in item),
             "serverless": row_dict.get("serverless", "false").lower() in ("true", "yes", "1"),

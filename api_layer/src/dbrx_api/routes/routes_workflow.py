@@ -65,7 +65,7 @@ async def upload_and_validate_sharepack(
             detail=f"Invalid file format: {str(e)}",
         )
 
-    # 2. Smart strategy detection (auto-detect optimal strategy)
+    # 2. Smart strategy detection (skip for DELETE; auto-detect for NEW/UPDATE)
     from dbrx_api.workflow.validators.strategy_detector import detect_optimal_strategy
 
     user_strategy = config.metadata.strategy
@@ -74,32 +74,36 @@ async def upload_and_validate_sharepack(
 
     logger.info(f"User specified strategy: {user_strategy}")
 
-    try:
-        # Get token manager from app state (for auth)
-        token_manager = getattr(request.app.state, "token_manager", None)
+    if user_strategy == "DELETE":
+        # DELETE uses name-only lists; no strategy auto-detection
+        validation_warnings = []
+    else:
+        try:
+            # Get token manager from app state (for auth)
+            token_manager = getattr(request.app.state, "token_manager", None)
 
-        # Detect optimal strategy based on existing resources
-        detection_result = await detect_optimal_strategy(
-            workspace_url=workspace_url,
-            config=config.dict(),
-            user_strategy=user_strategy,
-            token_manager=token_manager,
-        )
+            # Detect optimal strategy based on existing resources
+            detection_result = await detect_optimal_strategy(
+                workspace_url=workspace_url,
+                config=config.dict(),
+                user_strategy=user_strategy,
+                token_manager=token_manager,
+            )
 
-        # Update strategy if auto-corrected
-        if detection_result.strategy_changed:
-            logger.warning(f"Strategy auto-corrected: {user_strategy} → {detection_result.final_strategy}")
-            config.metadata.strategy = detection_result.final_strategy
+            # Update strategy if auto-corrected
+            if detection_result.strategy_changed:
+                logger.warning(f"Strategy auto-corrected: {user_strategy} → {detection_result.final_strategy}")
+                config.metadata.strategy = detection_result.final_strategy
 
-        validation_warnings = detection_result.warnings
+            validation_warnings = detection_result.warnings
 
-        # Log detection summary
-        logger.info(f"Strategy detection: {detection_result.get_summary()}")
+            # Log detection summary
+            logger.info(f"Strategy detection: {detection_result.get_summary()}")
 
-    except Exception as e:
-        # If detection fails, use user's original strategy
-        logger.error(f"Strategy detection failed: {e}", exc_info=True)
-        validation_warnings = [f"Could not auto-detect strategy: {str(e)}. Using '{user_strategy}' as specified."]
+        except Exception as e:
+            # If detection fails, use user's original strategy
+            logger.error(f"Strategy detection failed: {e}", exc_info=True)
+            validation_warnings = [f"Could not auto-detect strategy: {str(e)}. Using '{user_strategy}' as specified."]
 
     # 3. Store in database (with deduplication)
     from dbrx_api.workflow.db.repository_share_pack import SharePackRepository
@@ -110,8 +114,8 @@ async def upload_and_validate_sharepack(
     # Generate unique identifier for deduplication
     # Based on: requestor + business_line + project_name (if available)
     requestor = config.metadata.requestor
-    business_line = config.metadata.business_line
-    project_name = getattr(config.metadata, "project_name", None) or "default"
+    business_line = config.metadata.business_line.strip()
+    project_name = (config.metadata.project_name or "default").strip() or "default"
 
     # Create a stable share pack name for deduplication
     stable_name = f"SharePack_{requestor}_{business_line}_{project_name}".replace(" ", "_")
@@ -160,6 +164,60 @@ async def upload_and_validate_sharepack(
         )
 
         logger.info(f"Share pack created: {share_pack_id}")
+
+    # 3b. Resolve tenant and project from metadata and log to DB (best-effort).
+    # Tenants and tenant_regions are reference data (manually maintained / admin-uploaded).
+    # We only link share pack to an existing tenant that has at least one tenant_region.
+    if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+        try:
+            from dbrx_api.workflow.db.repository_project import ProjectRepository
+            from dbrx_api.workflow.db.repository_tenant import TenantRegionRepository
+            from dbrx_api.workflow.db.repository_tenant import TenantRepository
+
+            tenant_repo = TenantRepository(db_pool.pool)
+            tenant_region_repo = TenantRegionRepository(db_pool.pool)
+            project_repo = ProjectRepository(db_pool.pool)
+
+            tenant = await tenant_repo.get_by_name(business_line)
+            if not tenant:
+                logger.warning(
+                    "Skipping tenant/project link: tenant not found (tenant_regions reference data must be loaded first)",
+                    business_line=business_line,
+                    share_pack_id=str(share_pack_id),
+                )
+            else:
+                regions = await tenant_region_repo.list_by_tenant(UUID(str(tenant["tenant_id"])))
+                if not regions:
+                    logger.warning(
+                        "Skipping tenant/project link: tenant has no tenant_regions (reference data must be loaded first)",
+                        business_line=business_line,
+                        tenant_id=str(tenant["tenant_id"]),
+                        share_pack_id=str(share_pack_id),
+                    )
+                else:
+                    project = await project_repo.get_or_create_by_tenant_and_name(
+                        UUID(str(tenant["tenant_id"])),
+                        project_name,
+                        created_by=requestor,
+                    )
+                    await repo.update_tenant_and_project(
+                        share_pack_id,
+                        UUID(str(tenant["tenant_id"])),
+                        UUID(str(project["project_id"])),
+                        updated_by=requestor,
+                    )
+                    logger.info(
+                        "Resolved tenant and project for share pack",
+                        share_pack_id=str(share_pack_id),
+                        tenant_id=str(tenant["tenant_id"]),
+                        project_id=str(project["project_id"]),
+                    )
+        except Exception as resolve_err:
+            logger.warning(
+                "Failed to resolve tenant/project for share pack (upload succeeded)",
+                share_pack_id=str(share_pack_id),
+                error=str(resolve_err),
+            )
 
     # 4. Enqueue for processing
     queue_client = request.app.state.queue_client
@@ -262,8 +320,9 @@ async def workflow_health(
 
     # Check queue
     queue_healthy = False
+    queue_message_count = 0
     try:
-        queue_client.get_queue_length()
+        queue_message_count = queue_client.get_queue_length()
         queue_healthy = True
     except Exception as e:
         logger.error(f"Queue health check failed: {e}")
@@ -284,12 +343,17 @@ async def workflow_health(
                 "DatabaseConnected": db_healthy,
                 "QueueConnected": queue_healthy,
                 "TablesCount": tables_count,
+                "QueueMessageCount": queue_message_count,
             },
         )
 
-    return WorkflowHealthResponse(
-        Message="Workflow system healthy",
-        DatabaseConnected=db_healthy,
-        QueueConnected=queue_healthy,
-        TablesCount=tables_count,
+    return JSONResponse(
+        status_code=200,
+        content={
+            "Message": "Workflow system healthy",
+            "DatabaseConnected": db_healthy,
+            "QueueConnected": queue_healthy,
+            "TablesCount": tables_count,
+            "QueueMessageCount": queue_message_count,
+        },
     )

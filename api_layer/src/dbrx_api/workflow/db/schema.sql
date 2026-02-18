@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS deltashare.share_packs (
     original_filename       VARCHAR(500),
     tenant_id               UUID,
     project_id              UUID,
+    request_source          VARCHAR(50) DEFAULT NULL,        -- Origin: share_pack, api, sync
 
     is_deleted              BOOLEAN NOT NULL DEFAULT false,
     effective_from          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -270,7 +271,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_project
 CREATE TABLE IF NOT EXISTS deltashare.recipients (
     record_id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     recipient_id            UUID NOT NULL,
-    share_pack_id           UUID NOT NULL,
+    share_pack_id           UUID,                            -- NULL for API-created recipients
     recipient_name          VARCHAR(255) NOT NULL,
     recipient_contact_email VARCHAR(255),                     -- Contact person email
     recipient_type          VARCHAR(10) NOT NULL,             -- D2D or D2O
@@ -280,6 +281,7 @@ CREATE TABLE IF NOT EXISTS deltashare.recipients (
     client_ip_addresses     JSONB DEFAULT '[]'::jsonb,
     token_expiry_days       INT,
     token_rotation          BOOLEAN DEFAULT false,
+    request_source          VARCHAR(50) DEFAULT NULL,        -- Origin: share_pack, api, sync
 
     is_deleted              BOOLEAN NOT NULL DEFAULT false,
     effective_from          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -296,6 +298,8 @@ CREATE INDEX IF NOT EXISTS idx_recipients_active
     ON deltashare.recipients(recipient_id) WHERE is_current = true AND is_deleted = false;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_recipients_name
     ON deltashare.recipients(recipient_name) WHERE is_current = true AND is_deleted = false;
+CREATE INDEX IF NOT EXISTS idx_recipients_share_pack
+    ON deltashare.recipients(share_pack_id) WHERE is_current = true AND share_pack_id IS NOT NULL;
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- 10. SHARES (Provisioned shares)
@@ -303,9 +307,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_recipients_name
 CREATE TABLE IF NOT EXISTS deltashare.shares (
     record_id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     share_id                UUID NOT NULL,
-    share_pack_id           UUID NOT NULL,
+    share_pack_id           UUID,                            -- NULL for API-created shares
     share_name              VARCHAR(255) NOT NULL,
     databricks_share_id     VARCHAR(255),                     -- Set after provisioning (via regular UPDATE)
+    description             TEXT DEFAULT '',                      -- Share description/comment
     share_assets            JSONB NOT NULL DEFAULT '[]'::jsonb,  -- List of asset strings from YAML
     recipients              JSONB NOT NULL DEFAULT '[]'::jsonb,  -- List of recipient names
 
@@ -314,6 +319,7 @@ CREATE TABLE IF NOT EXISTS deltashare.shares (
     ext_schema_name         VARCHAR(255),
     prefix_assetname        VARCHAR(100),
     share_tags              JSONB DEFAULT '[]'::jsonb,
+    request_source          VARCHAR(50) DEFAULT NULL,        -- Origin: share_pack, api, sync
 
     is_deleted              BOOLEAN NOT NULL DEFAULT false,
     effective_from          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -337,8 +343,8 @@ CREATE INDEX IF NOT EXISTS idx_shares_databricks_id
 CREATE TABLE IF NOT EXISTS deltashare.pipelines (
     record_id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     pipeline_id             UUID NOT NULL,
-    share_pack_id           UUID NOT NULL,
-    share_id                UUID NOT NULL,                    -- Parent share
+    share_pack_id           UUID,                            -- NULL for API-created pipelines
+    share_id                UUID,                            -- NULL for API-created pipelines
     pipeline_name           VARCHAR(255) NOT NULL,            -- {name_prefix}_{asset_name}
     databricks_pipeline_id  VARCHAR(255),                     -- DLT pipeline ID (set via regular UPDATE)
     databricks_job_id       VARCHAR(255),                     -- Job ID for schedule (set via regular UPDATE)
@@ -354,6 +360,7 @@ CREATE TABLE IF NOT EXISTS deltashare.pipelines (
     notification_list       JSONB DEFAULT '[]'::jsonb,
     tags                    JSONB DEFAULT '{}'::jsonb,
     serverless              BOOLEAN DEFAULT false,
+    request_source          VARCHAR(50) DEFAULT NULL,        -- Origin: share_pack, api, sync
 
     is_deleted              BOOLEAN NOT NULL DEFAULT false,
     effective_from          TIMESTAMPTZ NOT NULL DEFAULT NOW(),

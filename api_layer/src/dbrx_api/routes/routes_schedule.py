@@ -416,6 +416,40 @@ async def create_schedule_for_pipeline(
                 detail=result,
             )
 
+    # Log schedule to workflow DB for API-created pipelines (best-effort)
+    if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+        try:
+            schedules_after, _ = list_schedules_sdk(
+                dltshr_workspace_url=workspace_url,
+                pipeline_ids=[pipeline_id],
+            )
+            job_id = None
+            for s in schedules_after:
+                if s.get("job_name") == schedule_request.job_name:
+                    job_id = str(s.get("job_id", ""))
+                    break
+            if job_id:
+                from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
+
+                repo = PipelineRepository(request.app.state.domain_db_pool.pool)
+                await repo.update_schedule_from_api(
+                    pipeline_name=pipeline_name,
+                    databricks_job_id=job_id,
+                    cron_expression=cron_clean,
+                    timezone_str=schedule_request.time_zone,
+                    created_by="api",
+                )
+                logger.info(
+                    "Logged schedule to workflow DB", pipeline_name=pipeline_name, job_name=schedule_request.job_name
+                )
+        except Exception as db_err:
+            logger.warning(
+                "Failed to log schedule to workflow DB (Databricks create succeeded)",
+                pipeline_name=pipeline_name,
+                job_name=schedule_request.job_name,
+                error=str(db_err),
+            )
+
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
         content={
@@ -563,6 +597,31 @@ async def update_cron_expression_for_schedule(
                 detail=result,
             )
 
+    # Log schedule update to workflow DB for API-created pipelines (best-effort)
+    if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+        try:
+            from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
+
+            repo = PipelineRepository(request.app.state.domain_db_pool.pool)
+            await repo.update_schedule_from_api(
+                pipeline_name=pipeline_name,
+                databricks_job_id=str(job_id),
+                cron_expression=cron_expression,
+                created_by="api",
+            )
+            logger.info(
+                "Logged schedule cron update to workflow DB",
+                pipeline_name=pipeline_name,
+                job_name=job_name,
+            )
+        except Exception as db_err:
+            logger.warning(
+                "Failed to log schedule update to workflow DB (Databricks update succeeded)",
+                pipeline_name=pipeline_name,
+                job_name=job_name,
+                error=str(db_err),
+            )
+
     return {
         "message": "Cron expression updated successfully",
         "pipeline_name": pipeline_name,
@@ -688,6 +747,31 @@ async def update_timezone_for_schedule(
                 detail=result,
             )
 
+    # Log schedule update to workflow DB for API-created pipelines (best-effort)
+    if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+        try:
+            from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
+
+            repo = PipelineRepository(request.app.state.domain_db_pool.pool)
+            await repo.update_schedule_from_api(
+                pipeline_name=pipeline_name,
+                databricks_job_id=str(job_id),
+                timezone_str=time_zone,
+                created_by="api",
+            )
+            logger.info(
+                "Logged schedule timezone update to workflow DB",
+                pipeline_name=pipeline_name,
+                job_name=job_name,
+            )
+        except Exception as db_err:
+            logger.warning(
+                "Failed to log schedule update to workflow DB (Databricks update succeeded)",
+                pipeline_name=pipeline_name,
+                job_name=job_name,
+                error=str(db_err),
+            )
+
     return {
         "message": "Timezone updated successfully",
         "pipeline_name": pipeline_name,
@@ -796,6 +880,31 @@ async def delete_schedule_by_job_name(
                 detail=result,
             )
 
+    if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+        try:
+            from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
+
+            repo = PipelineRepository(request.app.state.domain_db_pool.pool)
+            await repo.update_schedule_from_api(
+                pipeline_name=pipeline_name,
+                databricks_job_id="",
+                cron_expression="",
+                timezone_str="UTC",
+                created_by="api",
+            )
+            logger.info(
+                "Cleared schedule in workflow DB after deletion",
+                pipeline_name=pipeline_name,
+                job_name=job_name,
+            )
+        except Exception as db_err:
+            logger.warning(
+                "Failed to clear schedule in workflow DB (Databricks delete succeeded)",
+                pipeline_name=pipeline_name,
+                job_name=job_name,
+                error=str(db_err),
+            )
+
     return {
         "message": f"Schedule '{job_name}' deleted successfully",
         "pipeline_name": pipeline_name,
@@ -859,6 +968,29 @@ async def delete_all_schedules_for_pipeline(
         pipeline_id=pipeline_id,
         job_name=None,
     )
+
+    if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+        try:
+            from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
+
+            repo = PipelineRepository(request.app.state.domain_db_pool.pool)
+            await repo.update_schedule_from_api(
+                pipeline_name=pipeline_name,
+                databricks_job_id="",
+                cron_expression="",
+                timezone_str="UTC",
+                created_by="api",
+            )
+            logger.info(
+                "Cleared all schedules in workflow DB after deletion",
+                pipeline_name=pipeline_name,
+            )
+        except Exception as db_err:
+            logger.warning(
+                "Failed to clear schedules in workflow DB (Databricks delete succeeded)",
+                pipeline_name=pipeline_name,
+                error=str(db_err),
+            )
 
     return {
         "message": result if isinstance(result, str) else "Schedules deleted successfully",

@@ -10,10 +10,13 @@ Usage:
     python validate_yaml.py path/to/your_sharepack.yaml
 """
 
+import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
-import re
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 try:
     import yaml
@@ -142,9 +145,7 @@ class SharePackYAMLValidator:
             status = str(metadata["approver_status"]).lower()
             valid_statuses = ["approved", "declined", "request_more_info", "pending"]
             if status not in valid_statuses:
-                self.errors.append(
-                    f"Invalid approver_status: '{status}'. Must be one of: {', '.join(valid_statuses)}"
-                )
+                self.errors.append(f"Invalid approver_status: '{status}'. Must be one of: {', '.join(valid_statuses)}")
 
         # Email validation
         email_fields = ["requestor", "configurator", "approver", "executive_team", "contact_email"]
@@ -212,9 +213,7 @@ class SharePackYAMLValidator:
         missing_fields = self.REQUIRED_RECIPIENT_FIELDS - recipient_fields
 
         if missing_fields:
-            self.errors.append(
-                f"Recipient {idx + 1}: Missing required fields: {', '.join(sorted(missing_fields))}"
-            )
+            self.errors.append(f"Recipient {idx + 1}: Missing required fields: {', '.join(sorted(missing_fields))}")
 
         # Type validation
         if "type" in recipient:
@@ -302,9 +301,7 @@ class SharePackYAMLValidator:
             delta_share = share["delta_share"]
             if isinstance(delta_share, dict):
                 if "ext_catalog_name" not in delta_share or "ext_schema_name" not in delta_share:
-                    self.errors.append(
-                        f"{share_name}: delta_share requires ext_catalog_name and ext_schema_name"
-                    )
+                    self.errors.append(f"{share_name}: delta_share requires ext_catalog_name and ext_schema_name")
                 else:
                     self.info.append(
                         f"      • Target: {delta_share['ext_catalog_name']}.{delta_share['ext_schema_name']}"

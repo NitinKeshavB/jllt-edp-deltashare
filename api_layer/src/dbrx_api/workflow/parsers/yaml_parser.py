@@ -45,6 +45,11 @@ def parse_yaml(file_content: Union[str, bytes, Path]) -> SharePackConfig:
     if data is None:
         raise ValueError("Empty YAML file")
 
+    # Normalize name-only config when strategy is DELETE
+    from dbrx_api.workflow.parsers.parser_factory import normalize_config_for_delete
+
+    data = normalize_config_for_delete(data)
+
     # Validate and convert to SharePackConfig
     try:
         config = SharePackConfig(**data)

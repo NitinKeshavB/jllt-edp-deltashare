@@ -26,9 +26,9 @@ Go to the collection → **Variables** tab and update:
 
 | Variable | Default Value | Description |
 |----------|---------------|-------------|
-| `base_url` | `http://localhost:8000` | Your API base URL |
+| `base_url` | `https://api-dev.jll.com/udp/dltshr` | Your API base URL |
 | `workspace_url` | `https://adb-xxxx.azuredatabricks.net` | Your Databricks workspace URL |
-| `subscription_key` | `your-subscription-key-here` | Azure APIM subscription key |
+| `subscription_key` | `your-subscription-key-here` | API subscription key |
 | `recipient_name` | `test_recipient` | Default recipient name for testing |
 
 ### Setting Variables
@@ -100,7 +100,7 @@ Go to the collection → **Variables** tab and update:
 POST {{base_url}}/recipients/d2d/partner_company
 Headers:
   X-Workspace-URL: {{workspace_url}}
-  Ocp-Apim-Subscription-Key: {{subscription_key}}
+  Subscription-Key: {{subscription_key}}
 Query Parameters:
   recipient_identifier: azure:eastus:12345678-1234-1234-1234-123456789012
   description: D2D recipient for partner company
@@ -113,7 +113,7 @@ Query Parameters:
 POST {{base_url}}/recipients/d2o/external_partner
 Headers:
   X-Workspace-URL: {{workspace_url}}
-  Ocp-Apim-Subscription-Key: {{subscription_key}}
+  Subscription-Key: {{subscription_key}}
 Query Parameters:
   description: External partner with restricted IPs
   ip_access_list: 192.168.1.100
@@ -126,7 +126,7 @@ Query Parameters:
 PUT {{base_url}}/recipients/external_partner/tokens/rotate
 Headers:
   X-Workspace-URL: {{workspace_url}}
-  Ocp-Apim-Subscription-Key: {{subscription_key}}
+  Subscription-Key: {{subscription_key}}
 Query Parameters:
   expire_in_seconds: 0
 ```
@@ -149,8 +149,7 @@ All requests require two headers:
 1. **X-Workspace-URL**: Your Databricks workspace URL
    - Format: `https://adb-xxxxx.azuredatabricks.net`
 
-2. **Ocp-Apim-Subscription-Key**: Your Azure APIM subscription key
-   - Get this from Azure API Management portal
+2. **Subscription-Key**: Your API subscription key
 
 ## IP Address Formats
 
@@ -195,7 +194,7 @@ When adding/revoking IP addresses, you can use:
 
 ### 401 Unauthorized
 - Check your subscription key is correct
-- Verify the key is active in Azure APIM
+- Verify the key is active
 
 ### 404 Workspace Not Found
 - Verify the `X-Workspace-URL` header is set correctly
@@ -227,4 +226,4 @@ More collections will be added for:
 
 ---
 
-For API documentation, see the OpenAPI spec at `http://localhost:8000/` when the server is running.
+For API documentation, see the OpenAPI spec at `https://api-dev.jll.com/udp/dltshr/` when the server is running.

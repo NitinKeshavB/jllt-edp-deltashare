@@ -1,7 +1,4 @@
 """dbrx_api."""
 
-from .monitoring.logger import configure_logger
-
-# Configure logger with default settings (just console logging)
-# Azure/PostgreSQL logging can be enabled by calling configure_logger with appropriate settings
-configure_logger()
+# Logger configuration is handled in main.py's create_app() function
+# This ensures settings are loaded before configuring logging

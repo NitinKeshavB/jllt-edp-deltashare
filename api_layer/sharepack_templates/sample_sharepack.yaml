@@ -1,9 +1,15 @@
+# Full Share Pack Template (YAML)
+# Use for NEW / UPDATE strategies. Validates with same rules as Excel.
+# Required: metadata (workspace_url, servicenow, approver_status=approved, etc.),
+# at least one of recipient or share; when share has share_assets, every asset
+# must have a pipeline with matching source_asset; non-continuous pipelines need schedule (cron/timezone).
+
 metadata:
   # Project Information
   requestor: test.user@jll.com
   project_name: "SharePack Demo - Q1 2024"
   business_line: "Data Platform Engineering"
-  strategy: NEW  # NEW or UPDATE
+  strategy: NEW  # NEW, UPDATE, or DELETE
   description: "Demo SharePack showcasing all features: explicit source assets, pipeline overrides, timezone support"
 
   # Required governance fields

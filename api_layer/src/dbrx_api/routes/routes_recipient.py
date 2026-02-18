@@ -30,6 +30,46 @@ from dbrx_api.schemas.schemas import GetRecipientsResponse
 ROUTER_RECIPIENT = APIRouter(tags=["Recipients"])
 
 
+async def _sync_recipient_to_db(request: Request, recipient_name: str, workspace_url: str) -> None:
+    """Best-effort: re-read recipient from Databricks and sync current state to workflow DB."""
+    if not (hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None):
+        return
+    try:
+        from dbrx_api.workflow.db.repository_recipient import RecipientRepository
+
+        repo = RecipientRepository(request.app.state.domain_db_pool.pool)
+        updated = get_recipient_by_name(recipient_name, workspace_url)
+        if not updated:
+            return
+        current_ips: list = []
+        if updated.ip_access_list and getattr(updated.ip_access_list, "allowed_ip_addresses", None):
+            current_ips = list(updated.ip_access_list.allowed_ip_addresses)
+        rtype = "D2D" if updated.authentication_type == AuthenticationType.DATABRICKS else "D2O"
+        desc = ""
+        if hasattr(updated, "comment") and updated.comment:
+            desc = updated.comment.strip()
+        databricks_id = str(getattr(updated, "id", recipient_name) or recipient_name)
+        dbrx_org = None
+        if rtype == "D2D" and hasattr(updated, "data_recipient_global_metastore_id"):
+            dbrx_org = updated.data_recipient_global_metastore_id
+        await repo.create_or_upsert_from_api(
+            recipient_name=recipient_name,
+            databricks_recipient_id=databricks_id,
+            recipient_type=rtype,
+            ip_access_list=current_ips if rtype == "D2O" else None,
+            description=desc,
+            recipient_databricks_org=dbrx_org,
+            created_by="api",
+        )
+        logger.info("Synced recipient state to workflow DB after API update", recipient_name=recipient_name)
+    except Exception as db_err:
+        logger.warning(
+            "Best-effort DB sync failed for recipient (Databricks op succeeded)",
+            recipient_name=recipient_name,
+            error=str(db_err),
+        )
+
+
 @ROUTER_RECIPIENT.get(
     "/recipients/{recipient_name}",
     responses={
@@ -162,7 +202,7 @@ async def delete_recipient_by_name(
     recipient_name: str,
     workspace_url: str = Depends(get_workspace_url),
 ):
-    """Delete a Recipient."""
+    """Delete a Recipient in Databricks and soft-delete in the workflow data model (audit trail)."""
     logger.info(
         "Deleting recipient",
         recipient_name=recipient_name,
@@ -179,6 +219,32 @@ async def delete_recipient_by_name(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission denied to delete recipient as user is not the owner: {recipient_name}",
             )
+        # Update data model: soft-delete all recipient records with this name (SCD2 + audit trail)
+        if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+            try:
+                from dbrx_api.workflow.db.repository_recipient import RecipientRepository
+
+                repo = RecipientRepository(request.app.state.domain_db_pool.pool)
+                records = await repo.list_by_recipient_name(recipient_name)
+                for rec in records:
+                    await repo.soft_delete(
+                        rec["recipient_id"],
+                        deleted_by="api",
+                        deletion_reason="Deleted via API (delete recipient by name)",
+                        request_source="api",
+                    )
+                if records:
+                    logger.info(
+                        "Soft-deleted recipient records in data model",
+                        recipient_name=recipient_name,
+                        count=len(records),
+                    )
+            except Exception as db_err:
+                logger.warning(
+                    "Failed to soft-delete recipient in data model (Databricks delete succeeded)",
+                    recipient_name=recipient_name,
+                    error=str(db_err),
+                )
         logger.info("Recipient deleted successfully", recipient_name=recipient_name, status_code=status.HTTP_200_OK)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -268,6 +334,29 @@ async def create_recipient_databricks_to_databricks(
     if recipient:
         response.status_code = status.HTTP_201_CREATED
         logger.info("D2D recipient created successfully", recipient_name=recipient_name, owner=recipient.owner)
+        if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+            try:
+                from dbrx_api.workflow.db.repository_recipient import RecipientRepository
+
+                repo = RecipientRepository(request.app.state.domain_db_pool.pool)
+                databricks_id = getattr(recipient, "id", recipient_name) or recipient_name
+                await repo.create_or_upsert_from_api(
+                    recipient_name=recipient_name,
+                    databricks_recipient_id=str(databricks_id),
+                    recipient_type="D2D",
+                    recipient_contact_email=None,
+                    recipient_databricks_org=recipient_identifier,
+                    ip_access_list=None,
+                    description=description,
+                    created_by="api",
+                )
+                logger.info("Logged D2D recipient to workflow DB", recipient_name=recipient_name)
+            except Exception as db_err:
+                logger.warning(
+                    "Failed to log recipient to workflow DB (Databricks create succeeded)",
+                    recipient_name=recipient_name,
+                    error=str(db_err),
+                )
     return recipient
 
 
@@ -353,6 +442,29 @@ async def create_recipient_databricks_to_opensharing(
     if recipient:
         response.status_code = status.HTTP_201_CREATED
         logger.info("D2O recipient created successfully", recipient_name=recipient_name, owner=recipient.owner)
+        if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+            try:
+                from dbrx_api.workflow.db.repository_recipient import RecipientRepository
+
+                repo = RecipientRepository(request.app.state.domain_db_pool.pool)
+                databricks_id = getattr(recipient, "id", recipient_name) or recipient_name
+                await repo.create_or_upsert_from_api(
+                    recipient_name=recipient_name,
+                    databricks_recipient_id=str(databricks_id),
+                    recipient_type="D2O",
+                    recipient_contact_email=None,
+                    recipient_databricks_org=None,
+                    ip_access_list=parsed_ip_list,
+                    description=description,
+                    created_by="api",
+                )
+                logger.info("Logged D2O recipient to workflow DB", recipient_name=recipient_name)
+            except Exception as db_err:
+                logger.warning(
+                    "Failed to log recipient to workflow DB (Databricks create succeeded)",
+                    recipient_name=recipient_name,
+                    error=str(db_err),
+                )
     return recipient
 
 
@@ -447,6 +559,7 @@ async def rotate_recipient_tokens(
     else:
         response.status_code = status.HTTP_200_OK
         logger.info("Recipient token rotated successfully", recipient_name=recipient_name)
+        await _sync_recipient_to_db(request, recipient_name, workspace_url)
         return recipient
 
 
@@ -551,6 +664,7 @@ async def add_client_ip_to_databricks_opensharing(
     else:
         response.status_code = status.HTTP_200_OK
         logger.info("IP addresses added successfully to recipient", recipient_name=recipient_name)
+        await _sync_recipient_to_db(request, recipient_name, workspace_url)
     return recipient
 
 
@@ -673,6 +787,7 @@ async def revoke_client_ip_from_databricks_opensharing(
     else:
         response.status_code = status.HTTP_200_OK
         logger.info("IP addresses revoked successfully from recipient", recipient_name=recipient_name)
+        await _sync_recipient_to_db(request, recipient_name, workspace_url)
     return recipient
 
 
@@ -758,6 +873,7 @@ async def update_recipients_description(
     else:
         response.status_code = status.HTTP_200_OK
         logger.info("Recipient description updated successfully", recipient_name=recipient_name)
+        await _sync_recipient_to_db(request, recipient_name, workspace_url)
         return recipient
 
 
@@ -855,4 +971,5 @@ async def update_recipients_expiration_time(
                 recipient_name=recipient_name,
                 expiration_time_in_days=expiration_time_in_days,
             )
+            await _sync_recipient_to_db(request, recipient_name, workspace_url)
         return recipient

@@ -42,6 +42,7 @@ class TestHandleBroadExceptions:
     async def test_exception_returns_500(self, mock_log):
         """Test middleware catches exceptions and returns 500."""
         mock_request = MagicMock(spec=Request)
+        mock_request.state.request_body = None  # Avoid MagicMock in json.dumps
 
         async def mock_call_next(request):
             raise ValueError("Test error")
@@ -60,6 +61,7 @@ class TestHandlePydanticValidationErrors:
     async def test_validation_error(self, mock_log):
         """Test handling pydantic validation errors."""
         mock_request = MagicMock(spec=Request)
+        mock_request.state.request_body = None  # Avoid MagicMock in json.dumps
 
         class TestModel(pydantic.BaseModel):
             name: str
@@ -94,6 +96,7 @@ class TestHandleDatabricksErrors:
         """Test Databricks errors are mapped to correct HTTP status codes."""
         mock_request = MagicMock(spec=Request)
         mock_request.url.path = "/test"
+        mock_request.state.request_body = None  # Avoid MagicMock in json.dumps
 
         exc = exception_class(message)
         result = await handle_databricks_errors(mock_request, exc)

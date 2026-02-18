@@ -77,10 +77,13 @@ class Settings(BaseSettings):
 
     # Datadog Configuration
     dd_api_key: Optional[str] = None
-    """Datadog API key for log ingestion."""
+    """Datadog API key for log ingestion (optional, required for Datadog logging)."""
 
-    enable_datadog_logging: bool = False
-    """Enable logging to Datadog (disabled by default)."""
+    dd_service: str = "deltashare-api"
+    """Datadog service name for logging. Single source of truth for service name."""
+
+    enable_datadog_logging: bool = True
+    """Enable logging to Datadog (enabled by default when dd_api_key is provided)."""
 
     # Workflow System Configuration
     enable_workflow: bool = False

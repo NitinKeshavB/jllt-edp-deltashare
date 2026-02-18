@@ -8,12 +8,12 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "https://your-api.azurewebsites.net",
+			"value": "https://api-dev.jll.com/udp/dltshr",
 			"type": "string"
 		},
 		{
 			"key": "workspace_url",
-			"value": "https://adb-xxxx.azuredatabricks.net",
+			"value": "https://adb-1234567890123456.12.azuredatabricks.net",
 			"type": "string"
 		},
 		{
@@ -44,7 +44,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -57,12 +57,13 @@
 						{
 							"key": "start_timestamp",
 							"value": "",
-							"description": "Optional ISO timestamp (e.g., '2024-01-23T10:30:00Z'). If provided, returns runs from this timestamp onwards. If not provided, returns all runs."
+							"description": "Optional ISO timestamp (e.g., 2024-01-23T10:30:00Z). Returns runs from this timestamp onwards. If empty, returns all runs."
 						}
 					]
 				},
-				"description": "Extract pipeline run metrics for a specific pipeline. Retrieves comprehensive metrics including pipeline info, run details, timing information, and error messages for failed runs."
-			}
+				"description": "Extract pipeline run metrics. Returns pipeline info, run details, timing, and error messages.\n\nResponse 200: pipeline_name, pipeline_id, total_runs, runs array\nResponse 400: Invalid timestamp\nResponse 404: Pipeline not found"
+			},
+			"response": []
 		},
 		{
 			"name": "Get Pipeline Run Metrics (With Timestamp Filter)",
@@ -75,25 +76,26 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],
 				"url": {
-					"raw": "{{base_url}}/pipelines/{{pipeline_name}}/metrics?start_timestamp=2024-01-23T10:30:00Z",
+					"raw": "{{base_url}}/pipelines/{{pipeline_name}}/metrics?start_timestamp={{start_timestamp}}",
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "metrics"],
 					"query": [
 						{
 							"key": "start_timestamp",
-							"value": "2024-01-23T10:30:00Z",
+							"value": "{{start_timestamp}}",
 							"description": "ISO timestamp - returns runs from this timestamp onwards"
 						}
 					]
 				},
-				"description": "Extract pipeline run metrics filtered by start timestamp. Returns only runs that occurred after the specified timestamp."
-			}
+				"description": "Extract pipeline run metrics filtered by start timestamp. Returns only runs after the specified timestamp.\n\nEach run includes: update_id, run_status, start_time, end_time, duration_seconds"
+			},
+			"response": []
 		},
 		{
 			"name": "Get Job Run Metrics",
@@ -106,7 +108,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -119,12 +121,13 @@
 						{
 							"key": "start_timestamp",
 							"value": "",
-							"description": "Optional ISO timestamp (e.g., '2024-01-23T10:30:00Z'). If provided, returns runs from this timestamp onwards. If not provided, returns all runs."
+							"description": "Optional ISO timestamp. Returns job runs from this timestamp onwards. If empty, returns all runs."
 						}
 					]
 				},
-				"description": "Extract job run metrics for all jobs associated with a pipeline. Retrieves job information, run details, timing, schedule info, and error messages."
-			}
+				"description": "Extract job run metrics for all jobs associated with a pipeline.\n\nReturns: job_name, pipeline info, job_id, run_id, run_by, timing, schedule, status, error_message\n\nResponse 200: pipeline_name, pipeline_id, total_runs, runs array\nResponse 400: Invalid timestamp\nResponse 404: Pipeline not found"
+			},
+			"response": []
 		},
 		{
 			"name": "Get Job Run Metrics (With Timestamp Filter)",
@@ -137,25 +140,26 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],
 				"url": {
-					"raw": "{{base_url}}/pipelines/{{pipeline_name}}/job-runs/metrics?start_timestamp=2024-01-23T10:30:00Z",
+					"raw": "{{base_url}}/pipelines/{{pipeline_name}}/job-runs/metrics?start_timestamp={{start_timestamp}}",
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "job-runs", "metrics"],
 					"query": [
 						{
 							"key": "start_timestamp",
-							"value": "2024-01-23T10:30:00Z",
-							"description": "ISO timestamp - returns runs from this timestamp onwards"
+							"value": "{{start_timestamp}}",
+							"description": "ISO timestamp - returns job runs from this timestamp onwards"
 						}
 					]
 				},
-				"description": "Extract job run metrics filtered by start timestamp. Returns only job runs that occurred after the specified timestamp."
-			}
+				"description": "Extract job run metrics filtered by start timestamp. Returns only job runs after the specified timestamp.\n\nEach run includes: job_name, job_id, run_id, run_by, start_time, end_time, duration_seconds, job_schedule, run_status, result_state, error_message"
+			},
+			"response": []
 		}
 	]
 }

@@ -58,6 +58,76 @@ async def run_migrations(pool: asyncpg.Pool) -> None:
             logger.error(f"❌ Migration failed: {e}")
             raise
 
+        await _run_incremental_migrations_impl(conn)
+
+
+async def run_incremental_migrations(pool: asyncpg.Pool) -> None:
+    """Run only incremental migrations (add columns, alter nullability).
+
+    Safe to call on every startup. Use when schema/tables already exist so that
+    existing DBs get new columns (e.g. request_source) without re-running full schema.
+    """
+    async with pool.acquire() as conn:
+        await _run_incremental_migrations_impl(conn)
+
+
+async def _run_incremental_migrations_impl(conn: asyncpg.Connection) -> None:
+    """Shared implementation: add request_source, allow NULL FKs for API-created rows."""
+    # Incremental: add request_source to SCD2 tables (existing DBs)
+    for table in ("share_packs", "recipients", "shares", "pipelines"):
+        try:
+            await conn.execute(
+                f"""
+                ALTER TABLE deltashare.{table}
+                ADD COLUMN IF NOT EXISTS request_source VARCHAR(50) DEFAULT NULL
+                """
+            )
+            logger.debug(f"Ensured request_source on deltashare.{table}")
+        except Exception as col_err:
+            logger.warning(f"Column request_source on {table} (may already exist): {col_err}")
+
+    # Temporary deployment marker (remove in next deployment)
+    try:
+        await conn.execute(
+            """
+            ALTER TABLE deltashare.users
+            ADD COLUMN IF NOT EXISTS deployment_marker VARCHAR(50) DEFAULT 'v2026_02_16'
+            """
+        )
+        logger.info("deployment_marker column added to users table - code is current")
+    except Exception as marker_err:
+        logger.warning(f"deployment_marker on users (may already exist): {marker_err}")
+
+    # Add description column to shares table (existing DBs)
+    try:
+        await conn.execute(
+            """
+            ALTER TABLE deltashare.shares
+            ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''
+            """
+        )
+        logger.debug("Ensured description column on deltashare.shares")
+    except Exception as desc_err:
+        logger.warning(f"Column description on shares (may already exist): {desc_err}")
+
+    # Allow NULL share_pack_id / share_id for API-created rows
+    for table, col in (
+        ("recipients", "share_pack_id"),
+        ("shares", "share_pack_id"),
+        ("pipelines", "share_pack_id"),
+        ("pipelines", "share_id"),
+    ):
+        try:
+            await conn.execute(
+                f"""
+                ALTER TABLE deltashare.{table}
+                ALTER COLUMN {col} DROP NOT NULL
+                """
+            )
+            logger.debug(f"Allowed NULL {col} on deltashare.{table}")
+        except Exception as alt_err:
+            logger.warning(f"ALTER {table}.{col} (may already be nullable): {alt_err}")
+
 
 async def verify_schema(pool: asyncpg.Pool) -> dict:
     """Verify that all required tables exist.

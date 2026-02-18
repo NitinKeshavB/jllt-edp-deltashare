@@ -2,13 +2,13 @@
 	"info": {
 		"_postman_id": "b2c3d4e5-f6a7-4b5c-9d0e-1f2a3b4c5d6e",
 		"name": "Delta Share - Shares API",
-		"description": "Complete API collection for managing Delta Share shares and permissions",
+		"description": "Complete API collection for managing Delta Share shares, data objects, and share permissions",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "https://your-api.azurewebsites.net",
+			"value": "https://api-dev.jll.com/udp/dltshr",
 			"type": "string"
 		},
 		{
@@ -44,7 +44,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -66,7 +66,7 @@
 						}
 					]
 				},
-				"description": "List all shares in the workspace with optional prefix filtering and pagination."
+				"description": "List all shares in the workspace with optional prefix filtering and pagination.\n\nResponse 200: Message with count + array of ShareInfo objects\nResponse 204: No shares found"
 			},
 			"response": []
 		},
@@ -81,7 +81,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -91,7 +91,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}"]
 				},
-				"description": "Get details of a specific share including its data objects and recipients."
+				"description": "Get details of a specific share including its data objects and recipients.\n\nResponse 200: ShareInfo object\nResponse 404: Share not found"
 			},
 			"response": []
 		},
@@ -106,13 +106,13 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
 				],
 				"url": {
-					"raw": "{{base_url}}/shares/{{share_name}}?description=Test share for analytics&storage_root=",
+					"raw": "{{base_url}}/shares/{{share_name}}?description=Test share for analytics",
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}"],
 					"query": [
@@ -124,11 +124,12 @@
 						{
 							"key": "storage_root",
 							"value": "",
-							"description": "Optional storage root path"
+							"description": "Optional storage root URL. Leave empty, omit, or set to blank/null to use default storage.",
+							"disabled": true
 						}
 					]
 				},
-				"description": "Create a new share with the specified name and description."
+				"description": "Create a new share with the specified name and description.\n\nQuery Parameters:\n- description (required): Share description\n- storage_root (optional): Storage root URL. Accepts empty string, null, or can be omitted entirely to use default storage.\n\nResponse 201: ShareInfo object\nResponse 400: Invalid share name\nResponse 409: Share already exists"
 			},
 			"response": []
 		},
@@ -143,7 +144,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -153,7 +154,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}"]
 				},
-				"description": "Delete an existing share. This will remove all data objects and recipients from the share."
+				"description": "Delete an existing share. Removes all data objects and recipients.\n\nResponse 200: Deleted Share successfully!\nResponse 403: Permission denied\nResponse 404: Share not found"
 			},
 			"response": []
 		},
@@ -168,7 +169,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					},
@@ -180,14 +181,19 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n\t\"tables\": [\n\t\t\"catalog.schema.table1\",\n\t\t\"catalog.schema.table2\"\n\t],\n\t\"views\": [],\n\t\"schemas\": []\n}"
+					"raw": "{\n\t\"tables\": [\n\t\t\"catalog.schema.table1\",\n\t\t\"catalog.schema.table2\"\n\t],\n\t\"views\": [\n\t\t\"catalog.schema.view1\"\n\t],\n\t\"schemas\": []\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
 				},
 				"url": {
 					"raw": "{{base_url}}/shares/{{share_name}}/dataobject/add",
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}", "dataobject", "add"]
 				},
-				"description": "Add tables, views, or schemas to a share. Provide at least one data object type."
+				"description": "Add tables, views, or schemas to a share. Use three-part naming: catalog.schema.object_name.\n\nRequest Body (AddDataObjectsRequest):\n- tables: array of fully-qualified table names\n- views: array of fully-qualified view names\n- schemas: array of fully-qualified schema names\n\nResponse 200: Updated ShareInfo\nResponse 400: Invalid request\nResponse 404: Share not found\nResponse 409: Data object already in share"
 			},
 			"response": []
 		},
@@ -202,7 +208,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					},
@@ -214,14 +220,19 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n\t\"tables\": [\n\t\t\"catalog.schema.table1\"\n\t],\n\t\"views\": [],\n\t\"schemas\": []\n}"
+					"raw": "{\n\t\"tables\": [\n\t\t\"catalog.schema.table1\"\n\t],\n\t\"views\": [],\n\t\"schemas\": []\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
 				},
 				"url": {
 					"raw": "{{base_url}}/shares/{{share_name}}/dataobject/revoke",
 					"host": ["{{base_url}}"],
 					"path": ["shares", "{{share_name}}", "dataobject", "revoke"]
 				},
-				"description": "Remove tables, views, or schemas from a share."
+				"description": "Remove tables, views, or schemas from a share.\n\nRequest Body (AddDataObjectsRequest): same as add\n\nResponse 200: Updated ShareInfo\nResponse 400: Invalid request\nResponse 403: Permission denied\nResponse 404: Share or data object not found"
 			},
 			"response": []
 		},
@@ -236,7 +247,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -253,7 +264,7 @@
 						}
 					]
 				},
-				"description": "Grant a recipient access to this share."
+				"description": "Grant a recipient access to this share.\n\nResponse 200: UpdateSharePermissionsResponse\nResponse 403: Permission denied\nResponse 404: Share or recipient not found\nResponse 409: Recipient already has access"
 			},
 			"response": []
 		},
@@ -268,7 +279,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -285,7 +296,7 @@
 						}
 					]
 				},
-				"description": "Revoke a recipient's access to this share."
+				"description": "Revoke a recipient's access to this share.\n\nResponse 200: UpdateSharePermissionsResponse\nResponse 403: Permission denied\nResponse 404: Share or recipient not found"
 			},
 			"response": []
 		}

@@ -33,6 +33,59 @@ from dbrx_api.schemas.schemas import UpdatePipelineNotificationsModel
 ROUTER_DBRX_PIPELINES = APIRouter(tags=["Pipelines"])
 
 
+async def _sync_pipeline_to_db(request: Request, pipeline_name: str, workspace_url: str) -> None:
+    """Best-effort: re-read pipeline from Databricks and sync current state to workflow DB."""
+    if not (hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None):
+        return
+    try:
+        from databricks.sdk import WorkspaceClient
+
+        from dbrx_api.dbrx_auth.token_gen import get_auth_token
+        from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
+
+        repo = PipelineRepository(request.app.state.domain_db_pool.pool)
+        pipeline = get_pipeline_by_name_sdk(workspace_url, pipeline_name)
+        if not pipeline:
+            return
+        session_token = get_auth_token(datetime.now(timezone.utc))[0]
+        w_client = WorkspaceClient(host=workspace_url, token=session_token)
+        full = w_client.pipelines.get(pipeline_id=pipeline.pipeline_id)
+        config = dict(full.spec.configuration) if full.spec and full.spec.configuration else {}
+        source_table = config.get("pipelines.source_table", pipeline_name) or pipeline_name
+        target_table = config.get("pipelines.target_table", pipeline_name) or pipeline_name
+        key_columns = config.get("pipelines.keys", "") or ""
+        scd_type = config.get("pipelines.scd_type", "2") or "2"
+        serverless = bool(full.spec.serverless) if full.spec else False
+        notification_emails: list = []
+        if full.spec and full.spec.notifications:
+            for n in full.spec.notifications:
+                if n.email_recipients:
+                    notification_emails.extend(list(n.email_recipients))
+        tags: dict = {}
+        if full.spec and full.spec.tags:
+            tags = dict(full.spec.tags)
+        await repo.create_or_upsert_from_api(
+            pipeline_name=pipeline_name,
+            databricks_pipeline_id=pipeline.pipeline_id,
+            asset_name=pipeline_name,
+            source_table=source_table,
+            target_table=target_table,
+            serverless=serverless,
+            key_columns=key_columns,
+            scd_type=scd_type,
+            tags=tags,
+            notification_emails=notification_emails,
+            created_by="api",
+        )
+        logger.info("Synced pipeline state to workflow DB after API update", pipeline_name=pipeline_name)
+    except Exception as db_err:
+        logger.warning(
+            "Best-effort DB sync failed for pipeline (Databricks op succeeded)",
+            pipeline_name=pipeline_name,
+            error=str(db_err),
+        )
+
+
 def _get_pipeline_with_full_spec(workspace_url: str, pipeline_name: str) -> tuple:
     """
     Helper function to get pipeline and its full spec, avoiding duplication.
@@ -300,6 +353,29 @@ async def create_pipeline(
 
     response.status_code = status.HTTP_201_CREATED
     logger.info("Pipeline created successfully", pipeline_name=pipeline_name, pipeline_id=pipeline.pipeline_id)
+    if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+        try:
+            from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
+
+            repo = PipelineRepository(request.app.state.domain_db_pool.pool)
+            config = create_request.configuration.model_dump(by_alias=True)
+            source_table = config.get("pipelines.source_table", pipeline_name) or pipeline_name
+            target_table = config.get("pipelines.target_table", pipeline_name) or pipeline_name
+            await repo.create_or_upsert_from_api(
+                pipeline_name=pipeline_name,
+                databricks_pipeline_id=pipeline.pipeline_id,
+                asset_name=pipeline_name,
+                source_table=source_table,
+                target_table=target_table,
+                created_by="api",
+            )
+            logger.info("Logged pipeline to workflow DB", pipeline_name=pipeline_name)
+        except Exception as db_err:
+            logger.warning(
+                "Failed to log pipeline to workflow DB (Databricks create succeeded)",
+                pipeline_name=pipeline_name,
+                error=str(db_err),
+            )
     return pipeline
 
 
@@ -388,6 +464,31 @@ async def delete_pipeline_by_name(
         # Success
         response.status_code = status.HTTP_200_OK
         logger.info("Pipeline deleted successfully", pipeline_name=pipeline_name, pipeline_id=pipeline_id)
+        if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+            try:
+                from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
+
+                repo = PipelineRepository(request.app.state.domain_db_pool.pool)
+                records = await repo.list_by_pipeline_name(pipeline_name)
+                for rec in records:
+                    await repo.soft_delete(
+                        rec["pipeline_id"],
+                        deleted_by="api",
+                        deletion_reason="Deleted via API (delete pipeline by name)",
+                        request_source="api",
+                    )
+                if records:
+                    logger.info(
+                        "Soft-deleted pipeline records in data model",
+                        pipeline_name=pipeline_name,
+                        count=len(records),
+                    )
+            except Exception as db_err:
+                logger.warning(
+                    "Failed to soft-delete pipeline in data model (Databricks delete succeeded)",
+                    pipeline_name=pipeline_name,
+                    error=str(db_err),
+                )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"message": f"Pipeline '{pipeline_name}' deleted successfully"},
@@ -656,6 +757,7 @@ async def update_pipeline_parameters(
         logger.info(
             "Pipeline configuration updated successfully", pipeline_name=pipeline_name, fields_updated=updated_fields
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -692,6 +794,7 @@ async def update_pipeline_parameters(
         logger.info(
             "Pipeline configuration updated successfully", pipeline_name=pipeline_name, fields_updated=updated_fields
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return update_result
 
 
@@ -863,6 +966,7 @@ async def update_pipeline_libraries(
             library_path=libraries_update.library_path,
             root_path=libraries_update.root_path,
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -900,6 +1004,7 @@ async def update_pipeline_libraries(
             library_path=libraries_update.library_path,
             root_path=libraries_update.root_path,
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return update_result
 
 
@@ -1151,6 +1256,7 @@ async def update_pipeline_notifications_add(
             final_notifications=merged_notifications,
             notification_count=len(merged_notifications),
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -1191,6 +1297,7 @@ async def update_pipeline_notifications_add(
             final_notifications=merged_notifications,
             notification_count=len(merged_notifications),
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -1482,6 +1589,7 @@ async def update_pipeline_notifications_remove(
             remaining_notifications=remaining_notifications,
             removal_count=len(actually_exist),
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -1522,6 +1630,7 @@ async def update_pipeline_notifications_remove(
             remaining_notifications=remaining_notifications,
             removal_count=len(actually_exist),
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -1677,6 +1786,7 @@ async def update_pipeline_continuous_mode(
             continuous=continuous_update.continuous,
             mode="continuous" if continuous_update.continuous else "triggered",
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -1715,6 +1825,7 @@ async def update_pipeline_continuous_mode(
             continuous=continuous_update.continuous,
             mode="continuous" if continuous_update.continuous else "triggered",
         )
+        await _sync_pipeline_to_db(request, pipeline_name, workspace_url)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={

@@ -10,10 +10,12 @@ Usage:
     python validate_excel.py path/to/your_sharepack.xlsx
 """
 
+import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
-import re
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 try:
     import pandas as pd
@@ -150,9 +152,7 @@ class SharePackValidator:
         actual_cols = set(df.columns)
 
         if not expected_cols.issubset(actual_cols):
-            self.errors.append(
-                f"Metadata sheet must have 'Field' and 'Value' columns. Found: {list(actual_cols)}"
-            )
+            self.errors.append(f"Metadata sheet must have 'Field' and 'Value' columns. Found: {list(actual_cols)}")
             return
 
         # Extract fields
@@ -197,9 +197,7 @@ class SharePackValidator:
             status = str(field_values["approver_status"]).lower()
             valid_statuses = ["approved", "declined", "request_more_info", "pending"]
             if status not in valid_statuses:
-                self.errors.append(
-                    f"Invalid approver_status: '{status}'. Must be one of: {', '.join(valid_statuses)}"
-                )
+                self.errors.append(f"Invalid approver_status: '{status}'. Must be one of: {', '.join(valid_statuses)}")
 
         # Email validation
         email_fields = ["requestor", "configurator", "approver", "executive_team", "contact_email"]
@@ -331,9 +329,7 @@ class SharePackValidator:
                     tag_list = [t.strip() for t in tags.split(";")]
                     for tag in tag_list:
                         if ":" not in tag:
-                            self.warnings.append(
-                                f"Row {idx + 2}: Tag should be key:value format: {tag}"
-                            )
+                            self.warnings.append(f"Row {idx + 2}: Tag should be key:value format: {tag}")
 
     def _is_valid_email(self, email: str) -> bool:
         """Basic email validation."""

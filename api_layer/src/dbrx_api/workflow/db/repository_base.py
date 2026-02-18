@@ -146,15 +146,22 @@ class BaseRepository:
                     change_reason,
                 )
 
-                # Write to audit trail
-                await self._write_audit(
-                    conn,
-                    entity_id,
-                    "CREATED" if not change_reason else "UPDATED",
-                    created_by,
-                    None,
-                    fields,
-                )
+                # Write to audit trail inside a savepoint so that audit failures
+                # do NOT abort the outer transaction (and roll back the SCD2 insert).
+                # In PostgreSQL, a failed statement aborts the entire transaction even
+                # if the Python exception is caught. A savepoint isolates the failure.
+                try:
+                    async with conn.transaction():
+                        await self._write_audit(
+                            conn,
+                            entity_id,
+                            "CREATED" if not change_reason else "UPDATED",
+                            created_by,
+                            None,
+                            fields,
+                        )
+                except Exception as e:
+                    logger.opt(exception=True).warning(f"Audit trail write failed (SCD2 operation preserved): {e}")
 
                 return record_id
 
@@ -163,6 +170,7 @@ class BaseRepository:
         entity_id: UUID,
         deleted_by: str,
         deletion_reason: str,
+        request_source: Optional[str] = None,
     ) -> Optional[UUID]:
         """
         Soft delete an entity (sets is_deleted=true via SCD2).
@@ -171,6 +179,7 @@ class BaseRepository:
             entity_id: Business key
             deleted_by: Who/what is deleting this entity
             deletion_reason: Why this entity is being deleted
+            request_source: Origin of delete (share_pack, api, sync)
 
         Returns:
             record_id (UUID) of deleted version, or None if not found
@@ -187,18 +196,24 @@ class BaseRepository:
                     entity_id,
                     deleted_by,
                     deletion_reason,
+                    request_source=request_source,
                 )
 
                 if record_id:
-                    # Write to audit trail
-                    await self._write_audit(
-                        conn,
-                        entity_id,
-                        "DELETED",
-                        deleted_by,
-                        current,
-                        {"is_deleted": True},
-                    )
+                    try:
+                        async with conn.transaction():
+                            await self._write_audit(
+                                conn,
+                                entity_id,
+                                "DELETED",
+                                deleted_by,
+                                current,
+                                {"is_deleted": True},
+                            )
+                    except Exception as e:
+                        logger.opt(exception=True).warning(
+                            f"Audit trail write failed for soft_delete (operation preserved): {e}"
+                        )
 
                 return record_id
 
@@ -231,15 +246,20 @@ class BaseRepository:
                 )
 
                 if record_id:
-                    # Write to audit trail
-                    await self._write_audit(
-                        conn,
-                        entity_id,
-                        "RECREATED",
-                        restored_by,
-                        {"is_deleted": True},
-                        {"is_deleted": False},
-                    )
+                    try:
+                        async with conn.transaction():
+                            await self._write_audit(
+                                conn,
+                                entity_id,
+                                "RECREATED",
+                                restored_by,
+                                {"is_deleted": True},
+                                {"is_deleted": False},
+                            )
+                    except Exception as e:
+                        logger.opt(exception=True).warning(
+                            f"Audit trail write failed for restore (operation preserved): {e}"
+                        )
 
                 return record_id
 
@@ -255,8 +275,12 @@ class BaseRepository:
         """
         Write an audit trail entry.
 
+        Callers MUST wrap this in a savepoint (nested conn.transaction()) so that
+        a failure here does not abort the outer transaction and roll back the
+        SCD2 operation.
+
         Args:
-            conn: Database connection (must be in transaction with main operation)
+            conn: Database connection (must be inside a savepoint)
             entity_id: Business key of entity being modified
             action: Action type (CREATED, UPDATED, DELETED, etc.)
             performed_by: Who/what performed the action
@@ -265,23 +289,19 @@ class BaseRepository:
         """
         import json
 
-        try:
-            await conn.execute(
-                """
-                INSERT INTO deltashare.audit_trail
-                    (entity_type, entity_id, action, performed_by, old_values, new_values)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                """,
-                self.table,
-                entity_id,
-                action,
-                performed_by,
-                json.dumps(old_values, default=str) if old_values else None,
-                json.dumps(new_values, default=str) if new_values else None,
-            )
-        except Exception as e:
-            # Audit trail failures should not break the main operation
-            logger.error(f"Failed to write audit trail: {e}", exc_info=True)
+        await conn.execute(
+            """
+            INSERT INTO deltashare.audit_trail
+                (entity_type, entity_id, action, performed_by, old_values, new_values)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+            """,
+            self.table,
+            entity_id,
+            action,
+            performed_by,
+            json.dumps(old_values, default=str) if old_values else None,
+            json.dumps(new_values, default=str) if new_values else None,
+        )
 
     async def exists(self, entity_id: UUID, include_deleted: bool = False) -> bool:
         """

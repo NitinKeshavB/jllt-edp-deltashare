@@ -2,7 +2,23 @@
 
 from unittest.mock import patch
 
+import pytest
 from databricks.sdk.service.pipelines import PipelineState
+
+
+@pytest.fixture(autouse=True)
+def mock_settings_env_for_pipelines():
+    """Set required env vars so Settings() succeeds when dbrx_pipelines is imported."""
+    with patch.dict(
+        "os.environ",
+        {
+            "CLIENT_ID": "test-client-id",
+            "CLIENT_SECRET": "test-client-secret",
+            "ACCOUNT_ID": "test-account-id",
+        },
+        clear=False,
+    ):
+        yield
 
 
 class TestGetPipelineByName:

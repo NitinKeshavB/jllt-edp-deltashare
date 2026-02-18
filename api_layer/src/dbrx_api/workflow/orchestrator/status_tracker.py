@@ -55,17 +55,25 @@ class StatusTracker:
         )
         logger.success(f"[{self.share_pack_id}] Provisioning COMPLETED")
 
-    async def fail(self, error: str):
+    async def fail(self, error: str, provisioning_status: str = "Provisioning failed"):
         """
         Mark share pack as FAILED.
 
         Args:
             error: Error message
+            provisioning_status: Optional status message (e.g. step where failed); defaults to
+                "Provisioning failed" so FAILED row has an explicit message.
         """
         from dbrx_api.workflow.db.repository_share_pack import SharePackRepository
 
         repo = SharePackRepository(self.pool)
-        await repo.update_status(self.share_pack_id, "FAILED", error_message=error, updated_by="orchestrator")
+        await repo.update_status(
+            self.share_pack_id,
+            "FAILED",
+            provisioning_status=provisioning_status,
+            error_message=error,
+            updated_by="orchestrator",
+        )
         logger.error(f"[{self.share_pack_id}] Provisioning FAILED: {error}")
 
         # For MVP, skip notification system

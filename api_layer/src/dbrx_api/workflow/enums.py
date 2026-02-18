@@ -40,6 +40,7 @@ class Strategy(str, Enum):
 
     NEW = "NEW"  # Create all entities from scratch
     UPDATE = "UPDATE"  # Diff existing state and apply changes only
+    DELETE = "DELETE"  # Delete listed recipients, shares, pipelines
 
 
 class SharePackStatus(str, Enum):

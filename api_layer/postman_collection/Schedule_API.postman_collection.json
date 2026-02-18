@@ -8,12 +8,12 @@
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "https://your-api.azurewebsites.net",
+			"value": "https://api-dev.jll.com/udp/dltshr",
 			"type": "string"
 		},
 		{
 			"key": "workspace_url",
-			"value": "https://adb-xxxx.azuredatabricks.net",
+			"value": "https://adb-1234567890123456.12.azuredatabricks.net",
 			"type": "string"
 		},
 		{
@@ -54,7 +54,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -76,7 +76,7 @@
 						}
 					]
 				},
-				"description": "List all schedules across all pipelines. Automatically handles pagination and returns all results. Use pipeline_name_search_string to filter by pipeline name."
+				"description": "List all schedules across all pipelines. Automatically handles pagination and returns all results.\n\nResponse 200: total count + array of schedule objects"
 			},
 			"response": []
 		},
@@ -91,7 +91,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -108,7 +108,7 @@
 						}
 					]
 				},
-				"description": "List all schedules for a specific pipeline. Automatically handles pagination and returns all schedules for the pipeline."
+				"description": "List all schedules for a specific pipeline with auto-pagination.\n\nResponse 200: pipeline_name, pipeline_id, total, schedules\nResponse 404: Pipeline not found"
 			},
 			"response": []
 		},
@@ -120,6 +120,11 @@
 					{
 						"key": "X-Workspace-URL",
 						"value": "{{workspace_url}}",
+						"type": "text"
+					},
+					{
+						"key": "Subscription-Key",
+						"value": "{{subscription_key}}",
 						"type": "text"
 					},
 					{
@@ -142,7 +147,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "schedules"]
 				},
-				"description": "Create a scheduled job for a pipeline. Uses Quartz cron format with 6 fields: seconds minutes hours day-of-month month day-of-week. Examples:\n- Daily at noon: '0 0 12 * * ?'\n- Every 15 minutes: '0 */15 * * * ?'\n- Weekdays at 9:30 AM: '0 30 9 ? * MON-FRI'\n- First day of month at midnight: '0 0 0 1 * ?'"
+				"description": "Create a scheduled job for a pipeline. Uses Quartz cron format (6 fields).\n\nRequired: job_name, cron_expression\nOptional: time_zone (default: UTC), paused (default: false), email_notifications, tags\n\nCron examples:\n- Daily at noon: 0 0 12 * * ?\n- Every 15 min: 0 */15 * * * ?\n- Weekdays 9:30 AM: 0 30 9 ? * MON-FRI\n\nResponse 201: message, pipeline_name, pipeline_id, job details\nResponse 400: Invalid request\nResponse 404: Pipeline not found\nResponse 409: Job name already exists"
 			},
 			"response": []
 		},
@@ -157,7 +162,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -174,7 +179,7 @@
 						}
 					]
 				},
-				"description": "Update the cron expression for an existing scheduled job. Quartz cron format with 6 required fields. Examples:\n- Every hour: '0 0 * * * ?'\n- Every 30 minutes: '0 */30 * * * ?'\n- Daily at 2:30 PM: '0 30 14 * * ?'\n- Every Monday at 9 AM: '0 0 9 ? * MON'"
+				"description": "Update the cron expression for a scheduled job.\n\nResponse 200: message, pipeline_name, job_name, job_id, cron_expression\nResponse 400: Invalid cron\nResponse 403: Permission denied\nResponse 404: Pipeline or job not found\nResponse 409: Conflict"
 			},
 			"response": []
 		},
@@ -189,7 +194,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -202,11 +207,11 @@
 						{
 							"key": "time_zone",
 							"value": "America/New_York",
-							"description": "New timezone (e.g., 'America/New_York', 'Europe/London', 'Asia/Tokyo', 'UTC')"
+							"description": "New timezone (e.g., America/New_York, Europe/London, Asia/Tokyo, UTC)"
 						}
 					]
 				},
-				"description": "Update the timezone for a scheduled job. Use standard timezone names like 'America/New_York', 'Europe/London', 'Asia/Tokyo', or 'UTC'."
+				"description": "Update the timezone for a scheduled job.\n\nResponse 200: message, pipeline_name, job_name, job_id, time_zone\nResponse 400: Invalid timezone\nResponse 403: Permission denied\nResponse 404: Pipeline or job not found\nResponse 409: Conflict"
 			},
 			"response": []
 		},
@@ -221,7 +226,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -231,7 +236,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "schedules", "{{job_name}}"]
 				},
-				"description": "Delete a specific schedule for a pipeline by job name. User must be the owner. This will permanently remove the scheduled job."
+				"description": "Delete a specific schedule by job name. User must be the owner.\n\nResponse 200: message, pipeline_name, pipeline_id, job_name\nResponse 403: Permission denied\nResponse 404: Pipeline or job not found"
 			},
 			"response": []
 		},
@@ -246,7 +251,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -256,7 +261,7 @@
 					"host": ["{{base_url}}"],
 					"path": ["pipelines", "{{pipeline_name}}", "schedules"]
 				},
-				"description": "Delete all schedules for a pipeline. User must be the owner. This will permanently remove all scheduled jobs associated with the pipeline."
+				"description": "Delete all schedules for a pipeline. User must be the owner.\n\nResponse 200: message with count, pipeline_name, pipeline_id\nResponse 404: Pipeline not found"
 			},
 			"response": []
 		}

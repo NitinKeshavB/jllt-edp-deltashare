@@ -6,20 +6,22 @@ from datetime import timezone
 from databricks.sdk.service.sharing import AuthenticationType
 from fastapi import status
 
+from tests.consts import API_BASE
+
 
 class TestRecipientAuthenticationHeaders:
     """Tests for required authentication headers on Recipient endpoints."""
 
     def test_missing_workspace_url_header(self, unauthenticated_client):
         """Test that requests without X-Workspace-URL header are rejected."""
-        response = unauthenticated_client.get("/recipients")
+        response = unauthenticated_client.get(f"{API_BASE}/recipients")
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         assert "X-Workspace-URL" in str(response.json())
 
     def test_missing_all_headers(self, unauthenticated_client):
         """Test that requests without required headers are rejected."""
-        response = unauthenticated_client.get("/recipients")
+        response = unauthenticated_client.get(f"{API_BASE}/recipients")
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         assert "X-Workspace-URL" in str(response.json())
@@ -30,7 +32,7 @@ class TestGetRecipient:
 
     def test_get_recipient_by_name_success(self, client, mock_recipient_business_logic):
         """Test successful retrieval of a recipient by name."""
-        response = client.get("/recipients/test_recipient")
+        response = client.get(f"{API_BASE}/recipients/test_recipient")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -42,7 +44,7 @@ class TestGetRecipient:
         """Test retrieval of non-existent recipient."""
         mock_recipient_business_logic["get"].return_value = None
 
-        response = client.get("/recipients/nonexistent_recipient")
+        response = client.get(f"{API_BASE}/recipients/nonexistent_recipient")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "not found" in response.json()["detail"].lower()
@@ -53,7 +55,7 @@ class TestListRecipients:
 
     def test_list_all_recipients_success(self, client, mock_recipient_business_logic):
         """Test successful listing of all recipients."""
-        response = client.get("/recipients")
+        response = client.get(f"{API_BASE}/recipients")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -66,7 +68,7 @@ class TestListRecipients:
         """Test listing recipients with prefix filter."""
         mock_recipient_business_logic["list"].return_value = [mock_recipient_info(name="test_recipient1")]
 
-        response = client.get("/recipients?prefix=test")
+        response = client.get(f"{API_BASE}/recipients?prefix=test")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -74,7 +76,7 @@ class TestListRecipients:
 
     def test_list_recipients_with_page_size(self, client, mock_recipient_business_logic):
         """Test listing recipients with custom page size."""
-        response = client.get("/recipients?page_size=50")
+        response = client.get(f"{API_BASE}/recipients?page_size=50")
 
         assert response.status_code == status.HTTP_200_OK
         mock_recipient_business_logic["list"].assert_called_once()
@@ -83,14 +85,14 @@ class TestListRecipients:
         """Test listing recipients when no recipients exist."""
         mock_recipient_business_logic["list"].return_value = []
 
-        response = client.get("/recipients")
+        response = client.get(f"{API_BASE}/recipients")
 
         assert response.status_code == status.HTTP_200_OK
         assert "No recipients found" in response.json()["detail"]
 
     def test_list_recipients_invalid_page_size(self, client):
         """Test listing recipients with invalid page size."""
-        response = client.get("/recipients?page_size=0")
+        response = client.get(f"{API_BASE}/recipients?page_size=0")
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
@@ -100,7 +102,7 @@ class TestDeleteRecipient:
 
     def test_delete_recipient_success(self, client, mock_recipient_business_logic):
         """Test successful deletion of a recipient."""
-        response = client.delete("/recipients/test_recipient")
+        response = client.delete(f"{API_BASE}/recipients/test_recipient")
 
         assert response.status_code == status.HTTP_200_OK
         assert "Deleted Recipient successfully" in response.json()["message"]
@@ -110,7 +112,7 @@ class TestDeleteRecipient:
         """Test deletion of non-existent recipient."""
         mock_recipient_business_logic["get"].return_value = None
 
-        response = client.delete("/recipients/nonexistent_recipient")
+        response = client.delete(f"{API_BASE}/recipients/nonexistent_recipient")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "not found" in response.json()["detail"].lower()
@@ -119,7 +121,7 @@ class TestDeleteRecipient:
         """Test deletion when user is not the owner."""
         mock_recipient_business_logic["delete"].return_value = "User is not an owner of Recipient"
 
-        response = client.delete("/recipients/test_recipient")
+        response = client.delete(f"{API_BASE}/recipients/test_recipient")
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "Permission denied" in response.json()["detail"]
@@ -134,7 +136,7 @@ class TestCreateRecipientD2D:
         mock_recipient_business_logic["get"].return_value = None
 
         response = client.post(
-            "/recipients/d2d/new_d2d_recipient",
+            f"{API_BASE}/recipients/d2d/new_d2d_recipient",
             params={
                 "recipient_identifier": "metastore-id-12345",
                 "description": "D2D recipient for testing",
@@ -150,7 +152,7 @@ class TestCreateRecipientD2D:
     def test_create_d2d_recipient_already_exists(self, client, mock_recipient_business_logic):
         """Test creation of a D2D recipient that already exists."""
         response = client.post(
-            "/recipients/d2d/test_recipient",
+            f"{API_BASE}/recipients/d2d/test_recipient",
             params={
                 "recipient_identifier": "metastore-id-12345",
                 "description": "Duplicate recipient",
@@ -166,7 +168,7 @@ class TestCreateRecipientD2D:
         mock_recipient_business_logic["create_d2d"].return_value = "Invalid recipient_identifier format: invalid-id"
 
         response = client.post(
-            "/recipients/d2d/new_recipient",
+            f"{API_BASE}/recipients/d2d/new_recipient",
             params={
                 "recipient_identifier": "invalid-id",
                 "description": "Test recipient",
@@ -186,7 +188,7 @@ class TestCreateRecipientD2O:
         mock_recipient_business_logic["get"].return_value = None
 
         response = client.post(
-            "/recipients/d2o/new_d2o_recipient",
+            f"{API_BASE}/recipients/d2o/new_d2o_recipient",
             params={
                 "description": "D2O recipient for testing",
             },
@@ -201,7 +203,7 @@ class TestCreateRecipientD2O:
     def test_create_d2o_recipient_already_exists(self, client, mock_recipient_business_logic):
         """Test creation of a D2O recipient that already exists."""
         response = client.post(
-            "/recipients/d2o/test_recipient",
+            f"{API_BASE}/recipients/d2o/test_recipient",
             params={
                 "description": "Duplicate recipient",
             },
@@ -217,7 +219,7 @@ class TestCreateRecipientD2O:
         expiration_time = int(datetime.now(timezone.utc).timestamp() * 1000) + 86400000  # 24 hours
 
         response = client.post(
-            "/recipients/d2o/new_recipient",
+            f"{API_BASE}/recipients/d2o/new_recipient",
             params={
                 "description": "Test recipient",
                 "token_expiration_time_ms": expiration_time,
@@ -231,7 +233,7 @@ class TestCreateRecipientD2O:
         mock_recipient_business_logic["get"].return_value = None
 
         response = client.post(
-            "/recipients/d2o/new_recipient",
+            f"{API_BASE}/recipients/d2o/new_recipient",
             params={
                 "description": "Test recipient",
                 "ip_access_list": ["192.168.1.100", "10.0.0.0/24"],
@@ -245,7 +247,7 @@ class TestCreateRecipientD2O:
         mock_recipient_business_logic["get"].return_value = None
 
         response = client.post(
-            "/recipients/d2o/new_recipient",
+            f"{API_BASE}/recipients/d2o/new_recipient",
             params={
                 "description": "Test recipient",
                 "ip_access_list": ["invalid-ip", "999.999.999.999"],
@@ -261,7 +263,7 @@ class TestRotateRecipientToken:
 
     def test_rotate_token_success(self, client, mock_recipient_business_logic):
         """Test successful token rotation."""
-        response = client.put("/recipients/test_recipient/tokens/rotate")
+        response = client.put(f"{API_BASE}/recipients/test_recipient/tokens/rotate")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -273,7 +275,7 @@ class TestRotateRecipientToken:
         """Test token rotation for non-existent recipient."""
         mock_recipient_business_logic["get"].return_value = None
 
-        response = client.put("/recipients/nonexistent_recipient/tokens/rotate")
+        response = client.put(f"{API_BASE}/recipients/nonexistent_recipient/tokens/rotate")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "not found" in response.json()["detail"].lower()
@@ -284,7 +286,7 @@ class TestRotateRecipientToken:
             name="d2d_recipient", auth_type=AuthenticationType.DATABRICKS
         )
 
-        response = client.put("/recipients/d2d_recipient/tokens/rotate")
+        response = client.put(f"{API_BASE}/recipients/d2d_recipient/tokens/rotate")
 
         # Current implementation allows token rotation for all recipient types
         assert response.status_code == status.HTTP_200_OK
@@ -297,7 +299,9 @@ class TestRotateRecipientToken:
 
         expire_in_seconds = 86400  # 1 day in seconds
 
-        response = client.put(f"/recipients/test_recipient/tokens/rotate?expire_in_seconds={expire_in_seconds}")
+        response = client.put(
+            f"{API_BASE}/recipients/test_recipient/tokens/rotate?expire_in_seconds={expire_in_seconds}"
+        )
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -311,7 +315,7 @@ class TestAddClientIPToRecipient:
             name="test_recipient", auth_type=AuthenticationType.TOKEN
         )
 
-        response = client.put("/recipients/test_recipient/ipaddress/add?ip_access_list=192.168.1.100")
+        response = client.put(f"{API_BASE}/recipients/test_recipient/ipaddress/add?ip_access_list=192.168.1.100")
 
         assert response.status_code == status.HTTP_200_OK
         mock_recipient_business_logic["add_ip"].assert_called_once()
@@ -322,7 +326,7 @@ class TestAddClientIPToRecipient:
             name="test_recipient", auth_type=AuthenticationType.TOKEN
         )
 
-        response = client.put("/recipients/test_recipient/ipaddress/add?ip_access_list=192.168.1.0/24")
+        response = client.put(f"{API_BASE}/recipients/test_recipient/ipaddress/add?ip_access_list=192.168.1.0/24")
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -330,7 +334,9 @@ class TestAddClientIPToRecipient:
         """Test adding IP to non-existent recipient."""
         mock_recipient_business_logic["get"].return_value = None
 
-        response = client.put("/recipients/nonexistent_recipient/ipaddress/add?ip_access_list=192.168.1.100")
+        response = client.put(
+            f"{API_BASE}/recipients/nonexistent_recipient/ipaddress/add?ip_access_list=192.168.1.100"
+        )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -340,7 +346,7 @@ class TestAddClientIPToRecipient:
             name="d2d_recipient", auth_type=AuthenticationType.DATABRICKS
         )
 
-        response = client.put("/recipients/d2d_recipient/ipaddress/add?ip_access_list=192.168.1.100")
+        response = client.put(f"{API_BASE}/recipients/d2d_recipient/ipaddress/add?ip_access_list=192.168.1.100")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "DATABRICKS to DATABRICKS" in response.json()["detail"]
@@ -351,7 +357,7 @@ class TestAddClientIPToRecipient:
             name="test_recipient", auth_type=AuthenticationType.TOKEN
         )
 
-        response = client.put("/recipients/test_recipient/ipaddress/add?ip_access_list=invalid-ip")
+        response = client.put(f"{API_BASE}/recipients/test_recipient/ipaddress/add?ip_access_list=invalid-ip")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Invalid IP address" in response.json()["detail"]
@@ -370,7 +376,7 @@ class TestRevokeClientIPFromRecipient:
             ip_access_list=IpAccessList(allowed_ip_addresses=["192.168.1.100"]),
         )
 
-        response = client.put("/recipients/test_recipient/ipaddress/revoke?ip_access_list=192.168.1.100")
+        response = client.put(f"{API_BASE}/recipients/test_recipient/ipaddress/revoke?ip_access_list=192.168.1.100")
 
         assert response.status_code == status.HTTP_200_OK
         mock_recipient_business_logic["revoke_ip"].assert_called_once()
@@ -379,7 +385,9 @@ class TestRevokeClientIPFromRecipient:
         """Test revoking IP from non-existent recipient."""
         mock_recipient_business_logic["get"].return_value = None
 
-        response = client.put("/recipients/nonexistent_recipient/ipaddress/revoke?ip_access_list=192.168.1.100")
+        response = client.put(
+            f"{API_BASE}/recipients/nonexistent_recipient/ipaddress/revoke?ip_access_list=192.168.1.100"
+        )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -389,7 +397,7 @@ class TestRevokeClientIPFromRecipient:
             name="d2d_recipient", auth_type=AuthenticationType.DATABRICKS
         )
 
-        response = client.put("/recipients/d2d_recipient/ipaddress/revoke?ip_access_list=192.168.1.100")
+        response = client.put(f"{API_BASE}/recipients/d2d_recipient/ipaddress/revoke?ip_access_list=192.168.1.100")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "DATABRICKS to DATABRICKS" in response.json()["detail"]
@@ -400,7 +408,7 @@ class TestRevokeClientIPFromRecipient:
             name="test_recipient", auth_type=AuthenticationType.TOKEN
         )
 
-        response = client.put("/recipients/test_recipient/ipaddress/revoke?ip_access_list=invalid-ip")
+        response = client.put(f"{API_BASE}/recipients/test_recipient/ipaddress/revoke?ip_access_list=invalid-ip")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Invalid IP address" in response.json()["detail"]
@@ -412,7 +420,7 @@ class TestUpdateRecipientDescription:
     def test_update_description_success(self, client, mock_recipient_business_logic):
         """Test successful update of recipient description."""
         response = client.put(
-            "/recipients/test_recipient/description/update", params={"description": "Updated description"}
+            f"{API_BASE}/recipients/test_recipient/description/update", params={"description": "Updated description"}
         )
 
         assert response.status_code == status.HTTP_200_OK
@@ -425,7 +433,8 @@ class TestUpdateRecipientDescription:
         mock_recipient_business_logic["get"].return_value = None
 
         response = client.put(
-            "/recipients/nonexistent_recipient/description/update", params={"description": "Updated description"}
+            f"{API_BASE}/recipients/nonexistent_recipient/description/update",
+            params={"description": "Updated description"},
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -435,7 +444,7 @@ class TestUpdateRecipientDescription:
         mock_recipient_business_logic["update_desc"].return_value = "User is not an owner of Recipient"
 
         response = client.put(
-            "/recipients/test_recipient/description/update", params={"description": "Updated description"}
+            f"{API_BASE}/recipients/test_recipient/description/update", params={"description": "Updated description"}
         )
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -453,7 +462,7 @@ class TestUpdateRecipientExpiration:
         expiration_time_in_days = 1  # 1 day
 
         response = client.put(
-            "/recipients/test_recipient/expiration_time/update",
+            f"{API_BASE}/recipients/test_recipient/expiration_time/update",
             params={"expiration_time_in_days": expiration_time_in_days},
         )
 
@@ -467,7 +476,7 @@ class TestUpdateRecipientExpiration:
         expiration_time_in_days = 1  # 1 day
 
         response = client.put(
-            "/recipients/nonexistent_recipient/expiration_time/update",
+            f"{API_BASE}/recipients/nonexistent_recipient/expiration_time/update",
             params={"expiration_time_in_days": expiration_time_in_days},
         )
 
@@ -482,7 +491,7 @@ class TestUpdateRecipientExpiration:
         expiration_time_in_days = 1  # 1 day
 
         response = client.put(
-            "/recipients/d2d_recipient/expiration_time/update",
+            f"{API_BASE}/recipients/d2d_recipient/expiration_time/update",
             params={"expiration_time_in_days": expiration_time_in_days},
         )
 
@@ -499,7 +508,7 @@ class TestUpdateRecipientExpiration:
         expiration_time_in_days = 1  # 1 day
 
         response = client.put(
-            "/recipients/test_recipient/expiration_time/update",
+            f"{API_BASE}/recipients/test_recipient/expiration_time/update",
             params={"expiration_time_in_days": expiration_time_in_days},
         )
 

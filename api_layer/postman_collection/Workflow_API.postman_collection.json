@@ -2,18 +2,18 @@
 	"info": {
 		"_postman_id": "f6a7b8c9-d0e1-4f5a-3b4c-5d6e7f8a9b0c",
 		"name": "Delta Share - Workflow API",
-		"description": "API collection for share pack workflow management and provisioning",
+		"description": "API collection for share pack workflow management and provisioning (feature-flagged: enable_workflow=true)",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
 		{
 			"key": "base_url",
-			"value": "https://your-api.azurewebsites.net",
+			"value": "https://api-dev.jll.com/udp/dltshr",
 			"type": "string"
 		},
 		{
 			"key": "workspace_url",
-			"value": "https://adb-xxxx.azuredatabricks.net",
+			"value": "https://adb-1234567890123456.12.azuredatabricks.net",
 			"type": "string"
 		},
 		{
@@ -39,7 +39,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -60,8 +60,9 @@
 					"host": ["{{base_url}}"],
 					"path": ["workflow", "sharepack", "upload_and_validate"]
 				},
-				"description": "Upload a share pack configuration file (YAML) for provisioning. Returns 202 Accepted - processing happens asynchronously via Azure Storage Queue. Includes smart strategy auto-detection."
-			}
+				"description": "Upload a YAML share pack configuration file for validation and provisioning.\n\nAccepts: .yaml, .yml files\nIncludes smart strategy auto-detection (NEW vs UPDATE).\n\nResponse 202: Message, SharePackId, SharePackName, Status (IN_PROGRESS), ValidationErrors, ValidationWarnings\nResponse 400: Invalid file format or validation errors"
+			},
+			"response": []
 		},
 		{
 			"name": "Upload and Validate Share Pack (Excel)",
@@ -74,7 +75,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -95,8 +96,9 @@
 					"host": ["{{base_url}}"],
 					"path": ["workflow", "sharepack", "upload_and_validate"]
 				},
-				"description": "Upload a share pack configuration file (Excel) for provisioning. Returns 202 Accepted - processing happens asynchronously via Azure Storage Queue. Includes smart strategy auto-detection."
-			}
+				"description": "Upload an Excel share pack configuration file for validation and provisioning.\n\nAccepts: .xlsx, .xls files\nIncludes smart strategy auto-detection (NEW vs UPDATE).\n\nResponse 202: Message, SharePackId, SharePackName, Status (IN_PROGRESS), ValidationErrors, ValidationWarnings\nResponse 400: Invalid file format or validation errors"
+			},
+			"response": []
 		},
 		{
 			"name": "Get Share Pack Status",
@@ -109,7 +111,7 @@
 						"type": "text"
 					},
 					{
-						"key": "Ocp-Apim-Subscription-Key",
+						"key": "Subscription-Key",
 						"value": "{{subscription_key}}",
 						"type": "text"
 					}
@@ -119,8 +121,9 @@
 					"host": ["{{base_url}}"],
 					"path": ["workflow", "sharepack", "{{share_pack_id}}"]
 				},
-				"description": "Get current status of a share pack by ID. Returns status (IN_PROGRESS, COMPLETED, FAILED), provisioning status, and error messages if applicable."
-			}
+				"description": "Get current status of a share pack by ID.\n\nResponse 200: SharePackId, SharePackName, Status (IN_PROGRESS/COMPLETED/FAILED), Strategy, ProvisioningStatus, ErrorMessage, RequestedBy, CreatedAt, LastUpdated\nResponse 404: Share pack not found"
+			},
+			"response": []
 		},
 		{
 			"name": "Workflow Health Check",
@@ -132,8 +135,9 @@
 					"host": ["{{base_url}}"],
 					"path": ["workflow", "health"]
 				},
-				"description": "Check workflow system health. Verifies database connection, queue connection, and database schema (table count). Returns 503 if unhealthy."
-			}
+				"description": "Check workflow system health. Verifies database connection, queue connection, and database schema (16 expected tables).\n\nResponse 200: Message, DatabaseConnected, QueueConnected, TablesCount\nResponse 503: Unhealthy - database or queue connection failed"
+			},
+			"response": []
 		}
 	]
 }

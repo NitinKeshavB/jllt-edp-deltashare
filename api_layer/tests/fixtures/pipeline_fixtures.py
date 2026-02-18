@@ -230,12 +230,18 @@ def mock_pipelines_api(
 
 @pytest.fixture
 def mock_workspace_client_pipelines(mock_pipelines_api):
-    """Mock Databricks WorkspaceClient with pipelines API."""
-    with patch("dbrx_api.jobs.dbrx_pipelines.WorkspaceClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client.pipelines = mock_pipelines_api
-        mock_client_class.return_value = mock_client
-        yield mock_client
+    """Mock Databricks WorkspaceClient and get_auth_token for pipeline SDK tests."""
+    from datetime import datetime
+    from datetime import timezone
+
+    token_return = ("test-token", datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc))
+    with patch("dbrx_api.jobs.dbrx_pipelines.get_auth_token") as mock_token:
+        mock_token.return_value = token_return
+        with patch("dbrx_api.jobs.dbrx_pipelines.WorkspaceClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client.pipelines = mock_pipelines_api
+            mock_client_class.return_value = mock_client
+            yield mock_client
 
 
 @pytest.fixture

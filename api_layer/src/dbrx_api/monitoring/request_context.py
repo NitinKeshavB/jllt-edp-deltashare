@@ -227,10 +227,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 return {"_error": "Failed to read response body"}, response
 
             if not body_bytes:
+                new_headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
                 return None, Response(
                     content=body_bytes,
                     status_code=response.status_code,
-                    headers=dict(response.headers),
+                    headers=new_headers,
                     media_type=response.media_type,
                 )
 
@@ -247,11 +248,14 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 except json.JSONDecodeError:
                     response_body = {"_raw": body_bytes.decode("utf-8", errors="replace")[:1000]}
 
-            # Create new response with the same body
+            # Create new response with the same body.
+            # Exclude Content-Length so Starlette recalculates it from actual body_bytes,
+            # avoiding Content-Length mismatch errors in the Azure/Kestrel reverse proxy.
+            new_headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
             new_response = Response(
                 content=body_bytes,
                 status_code=response.status_code,
-                headers=dict(response.headers),
+                headers=new_headers,
                 media_type=response.media_type,
             )
 

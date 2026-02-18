@@ -17,13 +17,6 @@ from uuid import uuid4
 
 from loguru import logger
 
-from dbrx_api.dltshr.recipient import add_recipient_ip
-from dbrx_api.dltshr.recipient import get_recipients
-from dbrx_api.dltshr.recipient import revoke_recipient_ip
-from dbrx_api.dltshr.recipient import update_recipient_description
-from dbrx_api.dltshr.share import add_data_object_to_share
-from dbrx_api.dltshr.share import add_recipients_to_share
-from dbrx_api.dltshr.share import get_shares
 from dbrx_api.jobs.dbrx_pipelines import create_pipeline
 from dbrx_api.jobs.dbrx_pipelines import list_pipelines_with_search_criteria
 from dbrx_api.jobs.dbrx_pipelines import update_pipeline_target_configuration
@@ -34,8 +27,17 @@ from dbrx_api.jobs.dbrx_schedule import update_timezone_for_schedule
 from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
 from dbrx_api.workflow.db.repository_recipient import RecipientRepository
 from dbrx_api.workflow.db.repository_share import ShareRepository
+from dbrx_api.workflow.orchestrator.db_persist import persist_pipelines_to_db
+from dbrx_api.workflow.orchestrator.db_persist import persist_recipients_to_db
+from dbrx_api.workflow.orchestrator.db_persist import persist_shares_to_db
+from dbrx_api.workflow.orchestrator.pipeline_flow import _rollback_pipelines
+from dbrx_api.workflow.orchestrator.pipeline_flow import ensure_pipelines
 from dbrx_api.workflow.orchestrator.provisioning import validate_metadata
 from dbrx_api.workflow.orchestrator.provisioning import validate_sharepack_config
+from dbrx_api.workflow.orchestrator.recipient_flow import _rollback_recipients
+from dbrx_api.workflow.orchestrator.recipient_flow import ensure_recipients
+from dbrx_api.workflow.orchestrator.share_flow import _rollback_shares
+from dbrx_api.workflow.orchestrator.share_flow import ensure_shares
 from dbrx_api.workflow.orchestrator.status_tracker import StatusTracker
 
 
@@ -77,12 +79,13 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
         "schedules": [],
     }
 
-    # Track database IDs for rollback
-    created_db_records = {
-        "recipients": [],  # List of (recipient_id, databricks_recipient_id)
-        "shares": [],  # List of (share_id, databricks_share_id)
-        "pipelines": [],  # List of (pipeline_id, databricks_pipeline_id)
-    }
+    current_step = ""
+    recipient_rollback_list = []
+    recipient_db_entries = []
+    share_rollback_list = []
+    share_db_entries = []
+    pipeline_rollback_list = []
+    pipeline_db_entries = []
 
     try:
         import json
@@ -98,7 +101,8 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
         logger.info(f"Target workspace: {workspace_url}")
 
         # Validate metadata before proceeding
-        await tracker.update("Step 0/7: Validating metadata and configuration")
+        current_step = "Step 0/7: Validating metadata and configuration"
+        await tracker.update(current_step)
         validate_metadata(config["metadata"])
         validate_sharepack_config(config)
 
@@ -109,72 +113,72 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
         logger.info(f"Update scope: recipients={has_recipients}, shares={has_shares}")
 
         # Step 1: Initialize
-        await tracker.update("Step 1/7: Initializing update")
+        current_step = "Step 1/7: Initializing update"
+        await tracker.update(current_step)
 
-        # Step 2: Update Recipients (if present)
+        # Step 2: Ensure recipients (Databricks only — no DB writes)
         if has_recipients:
-            await tracker.update("Step 2/7: Updating recipients")
-            await _update_recipients(
-                workspace_url,
-                config["recipient"],
-                updated_resources,
-                recipient_repo,
-                share_pack_id,
-                created_db_records,
-                configurator=config["metadata"]["configurator"],
+            current_step = "Step 2/7: Creating/updating recipients"
+            await tracker.update(current_step)
+            await ensure_recipients(
+                workspace_url=workspace_url,
+                recipients_config=config["recipient"],
+                rollback_list=recipient_rollback_list,
+                db_entries=recipient_db_entries,
+                created_resources=updated_resources,
             )
         else:
             logger.info("No recipients section - skipping recipient updates")
             await tracker.update("Step 2/7: Skipping recipients (not in config)")
 
-        # Step 3: Update Shares (if present)
+        # Step 3: Ensure shares (Databricks only — no DB writes)
         if has_shares:
-            await tracker.update("Step 3/7: Updating shares")
-            await _update_shares(
-                workspace_url,
-                config["share"],
-                updated_resources,
-                share_repo,
-                share_pack_id,
-                created_db_records,
+            current_step = "Step 3/7: Creating/updating shares"
+            await tracker.update(current_step)
+            await ensure_shares(
+                workspace_url=workspace_url,
+                shares_config=config["share"],
+                rollback_list=share_rollback_list,
+                db_entries=share_db_entries,
+                created_resources=updated_resources,
             )
         else:
             logger.info("No shares section - skipping share updates")
             await tracker.update("Step 3/7: Skipping shares (not in config)")
 
-        # Step 4: Update Share Data Objects (if shares present)
+        # Step 4: Ensure pipelines (Databricks only — no DB writes)
         if has_shares:
-            await tracker.update("Step 4/7: Updating share data objects")
-            await _update_share_data_objects(workspace_url, config["share"], updated_resources)
-        else:
-            await tracker.update("Step 4/7: Skipping data objects (not in config)")
-
-        # Step 5: Update Share Permissions (if shares present)
-        if has_shares:
-            await tracker.update("Step 5/7: Updating share permissions")
-            await _update_share_permissions(workspace_url, config["share"], updated_resources)
-        else:
-            await tracker.update("Step 5/7: Skipping permissions (not in config)")
-
-        # Step 6: Update Pipelines (if shares present)
-        if has_shares:
-            await tracker.update("Step 6/7: Updating pipelines")
-            await _update_pipelines_and_schedules(
-                workspace_url,
-                config["share"],
-                updated_resources,
-                pipeline_repo,
-                share_repo,
-                share_pack_id,
-                created_db_records,
+            current_step = "Step 4/7: Updating pipelines"
+            await tracker.update(current_step)
+            await ensure_pipelines(
+                workspace_url=workspace_url,
+                shares_config=config["share"],
+                rollback_list=pipeline_rollback_list,
+                db_entries=pipeline_db_entries,
+                created_resources=updated_resources,
             )
 
-            # Step 7: Report schedule updates
-            await tracker.update("Step 7/7: Pipeline schedules updated")
+            # Step 5: Report schedule updates
+            await tracker.update("Step 5/7: Pipeline schedules updated")
             logger.info(f"Schedule updates: {len(updated_resources.get('schedules', []))} schedules created/updated")
         else:
-            await tracker.update("Step 6/7: Skipping pipelines (not in config)")
-            await tracker.update("Step 7/7: Skipping schedules (no pipelines)")
+            await tracker.update("Step 4/7: Skipping pipelines (not in config)")
+            await tracker.update("Step 5/7: Skipping schedules (no pipelines)")
+
+        # ALL Databricks ops succeeded → persist to DB
+        current_step = "Step 6/7: Persisting to database"
+        await tracker.update(current_step)
+
+        configurator = config["metadata"]["configurator"]
+        if recipient_db_entries:
+            await persist_recipients_to_db(recipient_db_entries, share_pack_id, configurator, recipient_repo)
+        share_name_to_id = {}
+        if share_db_entries:
+            share_name_to_id = await persist_shares_to_db(share_db_entries, share_pack_id, share_repo)
+        if pipeline_db_entries:
+            await persist_pipelines_to_db(
+                pipeline_db_entries, share_pack_id, share_name_to_id, share_repo, pipeline_repo
+            )
 
         # Mark as completed
         await tracker.complete()
@@ -188,382 +192,33 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
         )
 
     except Exception as e:
-        await tracker.fail(str(e))
+        await tracker.fail(str(e), current_step or "Provisioning failed")
         logger.error(f"Update failed for {share_pack_id}: {e}", exc_info=True)
         logger.warning(f"Resources updated before failure: {updated_resources}")
 
-        # Rollback: Mark created database records as deleted
-        logger.info("Starting rollback of database records")
-        try:
-            # Rollback recipients
-            for recipient_id in created_db_records["recipients"]:
-                try:
-                    await recipient_repo.soft_delete(
-                        recipient_id,
-                        deleted_by="orchestrator",
-                        deletion_reason=f"Rollback due to provisioning failure: {str(e)[:200]}",
-                    )
-                    logger.info(f"Rolled back recipient {recipient_id}")
-                except Exception as rb_error:
-                    logger.error(f"Failed to rollback recipient {recipient_id}: {rb_error}")
+        # Rollback Databricks only — no DB cleanup needed (DB was never written)
+        if pipeline_rollback_list:
+            logger.info("Rolling back pipeline changes in Databricks")
+            try:
+                _rollback_pipelines(pipeline_rollback_list, workspace_url)
+            except Exception as rb_err:
+                logger.error(f"Pipeline rollback failed: {rb_err}", exc_info=True)
 
-            # Rollback shares
-            for share_id in created_db_records["shares"]:
-                try:
-                    await share_repo.soft_delete(
-                        share_id,
-                        deleted_by="orchestrator",
-                        deletion_reason=f"Rollback due to provisioning failure: {str(e)[:200]}",
-                    )
-                    logger.info(f"Rolled back share {share_id}")
-                except Exception as rb_error:
-                    logger.error(f"Failed to rollback share {share_id}: {rb_error}")
+        if share_rollback_list:
+            logger.info("Rolling back share changes in Databricks")
+            try:
+                _rollback_shares(share_rollback_list, workspace_url)
+            except Exception as rb_err:
+                logger.error(f"Share rollback failed: {rb_err}", exc_info=True)
 
-            # Rollback pipelines
-            for pipeline_id in created_db_records["pipelines"]:
-                try:
-                    await pipeline_repo.soft_delete(
-                        pipeline_id,
-                        deleted_by="orchestrator",
-                        deletion_reason=f"Rollback due to provisioning failure: {str(e)[:200]}",
-                    )
-                    logger.info(f"Rolled back pipeline {pipeline_id}")
-                except Exception as rb_error:
-                    logger.error(f"Failed to rollback pipeline {pipeline_id}: {rb_error}")
-
-            logger.success("Database rollback completed")
-        except Exception as rollback_error:
-            logger.error(f"Rollback failed: {rollback_error}", exc_info=True)
+        if recipient_rollback_list:
+            logger.info("Rolling back recipient changes in Databricks")
+            try:
+                _rollback_recipients(recipient_rollback_list, workspace_url)
+            except Exception as rb_err:
+                logger.error(f"Recipient rollback failed: {rb_err}", exc_info=True)
 
         raise
-
-
-async def _update_recipients(
-    workspace_url: str,
-    recipients: List[Dict],
-    updated_resources: Dict,
-    recipient_repo: RecipientRepository,
-    share_pack_id: UUID,
-    created_db_records: Dict,
-    configurator: str,
-):
-    """Update recipient configurations and track in database.
-
-    Args:
-        configurator: Point of contact from metadata.configurator
-    """
-    for recip_config in recipients:
-        recipient_name = recip_config["name"]
-        recipient_type = recip_config["type"]
-
-        logger.info(f"Checking recipient: {recipient_name}")
-
-        try:
-            # Get existing recipient
-            existing = get_recipients(recipient_name, workspace_url)
-
-            if not existing:
-                # UPDATE strategy should only update existing resources, not create new ones
-                error_msg = (
-                    f"Recipient '{recipient_name}' does not exist in Databricks. "
-                    f"UPDATE strategy can only modify existing recipients. "
-                    f"Use NEW strategy to create recipients, or remove this recipient from the YAML."
-                )
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-
-            # Recipient exists, proceed with updates
-            logger.info(f"Found existing recipient: {recipient_name}")
-
-            # Update description if changed
-            new_description = recip_config.get("description", "")
-            if new_description and new_description != existing.comment:
-                result = update_recipient_description(recipient_name, new_description, workspace_url)
-                if not isinstance(result, str) or "success" in result.lower():
-                    logger.success(f"Updated description for recipient: {recipient_name}")
-                    updated_resources["recipients"].append(f"{recipient_name} (description)")
-
-            # Update token expiry/rotation for D2O recipients (UPDATE strategy)
-            if recipient_type == "D2O" and ("token_expiry" in recip_config or "token_rotation" in recip_config):
-                token_expiry_days = recip_config.get("token_expiry", 0)
-                token_rotation = recip_config.get("token_rotation", False)
-
-                # Case 4: token_expiry = 0 AND token_rotation = true
-                # Expire immediately using rotate_recipient_token(expire_in_seconds=0)
-                if token_expiry_days == 0 and token_rotation:
-                    logger.info(f"Rotating token for {recipient_name} - old token expires immediately")
-                    from dbrx_api.dltshr.recipient import rotate_recipient_token
-
-                    result = rotate_recipient_token(
-                        recipient_name=recipient_name,
-                        dltshr_workspace_url=workspace_url,
-                        expire_in_seconds=0,  # Old token expires immediately
-                    )
-
-                    if isinstance(result, str):
-                        logger.warning(f"Failed to rotate token for {recipient_name}: {result}")
-                    else:
-                        logger.success(f"Rotated token for {recipient_name} - old token expired immediately")
-                        updated_resources["recipients"].append(f"{recipient_name} (token_rotated)")
-
-                # Case 5: token_expiry > 0 AND token_rotation = true
-                # Convert days to seconds, rotate with grace period
-                elif token_expiry_days > 0 and token_rotation:
-                    logger.info(f"Rotating token for {recipient_name} - old token expires in {token_expiry_days} days")
-                    from dbrx_api.dltshr.recipient import rotate_recipient_token
-
-                    expire_in_seconds = token_expiry_days * 24 * 60 * 60  # Convert days to seconds
-                    result = rotate_recipient_token(
-                        recipient_name=recipient_name,
-                        dltshr_workspace_url=workspace_url,
-                        expire_in_seconds=expire_in_seconds,
-                    )
-
-                    if isinstance(result, str):
-                        logger.warning(f"Failed to rotate token for {recipient_name}: {result}")
-                    else:
-                        logger.success(
-                            f"Rotated token for {recipient_name} - old token expires in {token_expiry_days} days"
-                        )
-                        updated_resources["recipients"].append(f"{recipient_name} (token_rotated)")
-
-                # Case 7: token_expiry > 0 AND token_rotation = false
-                # Update recipient expiration time
-                elif token_expiry_days > 0 and not token_rotation:
-                    logger.info(f"Updating token expiration for {recipient_name} to {token_expiry_days} days")
-                    from dbrx_api.dltshr.recipient import update_recipient_expiration_time
-
-                    result = update_recipient_expiration_time(
-                        recipient_name=recipient_name,
-                        expiration_time=token_expiry_days,
-                        dltshr_workspace_url=workspace_url,
-                    )
-
-                    if isinstance(result, str) and "error" in result.lower():
-                        logger.warning(f"Failed to update token expiry for {recipient_name}: {result}")
-                    else:
-                        logger.success(f"Updated token expiry to {token_expiry_days} days for {recipient_name}")
-                        updated_resources["recipients"].append(f"{recipient_name} (token_expiry)")
-
-                # Case 6: token_expiry optional AND token_rotation optional
-                # Don't update anything
-                else:
-                    logger.debug(f"No token updates requested for {recipient_name}")
-
-            # Update IP access list for D2O recipients
-            # Supports TWO approaches:
-            # 1. Declarative: recipient_ips (complete list of desired IPs)
-            # 2. Explicit: recipient_ips_to_add + recipient_ips_to_remove (incremental changes)
-            if recipient_type == "D2O":
-                has_declarative = "recipient_ips" in recip_config and recip_config.get("recipient_ips")
-                has_explicit_add = "recipient_ips_to_add" in recip_config and recip_config.get("recipient_ips_to_add")
-                has_explicit_remove = "recipient_ips_to_remove" in recip_config and recip_config.get(
-                    "recipient_ips_to_remove"
-                )
-
-                if has_declarative or has_explicit_add or has_explicit_remove:
-                    # Get current IPs from Databricks
-                    current_ips_in_databricks = (
-                        set(existing.ip_access_list.allowed_ip_addresses)
-                        if existing.ip_access_list and existing.ip_access_list.allowed_ip_addresses
-                        else set()
-                    )
-                    logger.debug(f"Current IPs in Databricks for {recipient_name}: {current_ips_in_databricks}")
-
-                    ips_to_add = []
-                    ips_to_remove = []
-
-                    if has_declarative:
-                        # APPROACH 1: Declarative - specify complete desired state
-                        logger.info(f"Using DECLARATIVE approach for {recipient_name} IP management")
-                        desired_ips_from_yaml = set(recip_config["recipient_ips"])
-                        logger.debug(f"Desired IPs from YAML: {desired_ips_from_yaml}")
-
-                        # Calculate differences
-                        for ip in desired_ips_from_yaml:
-                            if ip not in current_ips_in_databricks:
-                                ips_to_add.append(ip)
-
-                        for ip in current_ips_in_databricks:
-                            if ip not in desired_ips_from_yaml:
-                                ips_to_remove.append(ip)
-
-                    else:
-                        # APPROACH 2: Explicit - specify only changes
-                        logger.info(f"Using EXPLICIT approach for {recipient_name} IP management")
-
-                        if has_explicit_add:
-                            explicit_add_list = recip_config.get("recipient_ips_to_add", [])
-                            logger.debug(f"Explicit IPs to add: {explicit_add_list}")
-                            # Only add IPs that don't already exist (idempotent)
-                            for ip in explicit_add_list:
-                                if ip not in current_ips_in_databricks:
-                                    ips_to_add.append(ip)
-                                else:
-                                    logger.debug(f"IP {ip} already exists, skipping add")
-
-                        if has_explicit_remove:
-                            explicit_remove_list = recip_config.get("recipient_ips_to_remove", [])
-                            logger.debug(f"Explicit IPs to remove: {explicit_remove_list}")
-                            # Only remove IPs that actually exist (idempotent)
-                            for ip in explicit_remove_list:
-                                if ip in current_ips_in_databricks:
-                                    ips_to_remove.append(ip)
-                                else:
-                                    logger.debug(f"IP {ip} doesn't exist, skipping remove")
-
-                    # Execute IP additions
-                    if ips_to_add:
-                        logger.info(f"Adding {len(ips_to_add)} IP(s) to {recipient_name}: {ips_to_add}")
-                        result = add_recipient_ip(recipient_name, ips_to_add, workspace_url)
-                        if not isinstance(result, str) or "success" in result.lower():
-                            logger.success(f"Successfully added {len(ips_to_add)} IP(s) to {recipient_name}")
-                            updated_resources["recipients"].append(f"{recipient_name} (added IPs)")
-                        else:
-                            logger.error(f"Failed to add IPs to {recipient_name}: {result}")
-
-                    # Execute IP removals
-                    if ips_to_remove:
-                        logger.info(f"Removing {len(ips_to_remove)} IP(s) from {recipient_name}: {ips_to_remove}")
-                        result = revoke_recipient_ip(recipient_name, ips_to_remove, workspace_url)
-                        if not isinstance(result, str) or "success" in result.lower():
-                            logger.success(f"Successfully removed {len(ips_to_remove)} IP(s) from {recipient_name}")
-                            updated_resources["recipients"].append(f"{recipient_name} (removed IPs)")
-                        else:
-                            logger.error(f"Failed to remove IPs from {recipient_name}: {result}")
-
-                    # Log if no changes needed
-                    if not ips_to_add and not ips_to_remove:
-                        logger.debug(f"IP addresses for {recipient_name} are already up to date - no changes needed")
-
-        except Exception as e:
-            logger.error(f"Failed to update recipient {recipient_name}: {e}")
-            raise  # Re-raise exception to fail the entire provisioning process
-
-
-async def _update_shares(
-    workspace_url: str,
-    shares: List[Dict],
-    updated_resources: Dict,
-    share_repo: ShareRepository,
-    share_pack_id: UUID,
-    created_db_records: Dict,
-):
-    """Update share configurations and track in database."""
-    for share_config in shares:
-        share_name = share_config["name"]
-
-        logger.info(f"Checking share: {share_name}")
-
-        try:
-            # Get existing share
-            existing = get_shares(share_name, workspace_url)
-
-            if not existing:
-                # UPDATE strategy should only update existing resources, not create new ones
-                error_msg = (
-                    f"Share '{share_name}' does not exist in Databricks. "
-                    f"UPDATE strategy can only modify existing shares. "
-                    f"Use NEW strategy to create shares, or remove this share from the YAML."
-                )
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-
-            # Share exists, proceed with updates
-            # Main updates are data objects and permissions (handled separately)
-            logger.info(f"Found existing share: {share_name}")
-
-        except Exception as e:
-            logger.error(f"Failed to check share {share_name}: {e}")
-            raise  # Re-raise exception to fail the entire provisioning process
-
-
-async def _update_share_data_objects(workspace_url: str, shares: List[Dict], updated_resources: Dict):
-    """Update data objects in shares."""
-    for share_config in shares:
-        share_name = share_config["name"]
-
-        if "share_assets" not in share_config:
-            logger.debug(f"No share_assets specified for {share_name}, skipping")
-            continue
-
-        assets = share_config["share_assets"]
-        logger.info(f"Updating {len(assets)} assets for share {share_name}")
-
-        # Categorize assets by type
-        tables_to_add = []
-        schemas_to_add = []
-
-        for asset in assets:
-            parts = asset.split(".")
-            if len(parts) == 1 or len(parts) == 2:
-                schemas_to_add.append(asset)
-            else:
-                tables_to_add.append(asset)
-
-        objects_to_add = {
-            "tables": tables_to_add,
-            "views": [],
-            "schemas": schemas_to_add,
-        }
-
-        try:
-            # Add data objects (API is idempotent - won't fail if already present)
-            result = add_data_object_to_share(
-                dltshr_workspace_url=workspace_url,
-                share_name=share_name,
-                objects_to_add=objects_to_add,
-            )
-
-            if isinstance(result, str):
-                if "already" in result.lower() or "duplicate" in result.lower():
-                    logger.info(f"Assets already present in share {share_name}")
-                else:
-                    logger.error(f"Failed to add assets to {share_name}: {result}")
-            else:
-                logger.success(f"Updated data objects for share: {share_name}")
-                updated_resources["data_objects"].append(share_name)
-
-        except Exception as e:
-            logger.error(f"Failed to update data objects for {share_name}: {e}")
-            raise  # Re-raise exception to fail the entire provisioning process
-
-
-async def _update_share_permissions(workspace_url: str, shares: List[Dict], updated_resources: Dict):
-    """Update recipient permissions on shares."""
-    for share_config in shares:
-        share_name = share_config["name"]
-
-        if "recipients" not in share_config:
-            logger.debug(f"No recipients specified for {share_name}, skipping")
-            continue
-
-        recipients = share_config["recipients"]
-        logger.info(f"Updating {len(recipients)} recipient permissions for {share_name}")
-
-        for recipient_name in recipients:
-            try:
-                # Add recipient to share (API is idempotent)
-                result = add_recipients_to_share(
-                    dltshr_workspace_url=workspace_url,
-                    share_name=share_name,
-                    recipient_name=recipient_name,
-                )
-
-                if isinstance(result, str):
-                    if "already" in result.lower() or "duplicate" in result.lower():
-                        logger.debug(f"Recipient {recipient_name} already has access to {share_name}")
-                    else:
-                        error_msg = f"Failed to attach recipient '{recipient_name}' to share '{share_name}': {result}"
-                        logger.error(error_msg)
-                        raise RuntimeError(error_msg)
-                else:
-                    logger.success(f"Updated permission: {recipient_name} → {share_name}")
-                    updated_resources["permissions"].append(f"{recipient_name} → {share_name}")
-
-            except Exception as e:
-                logger.error(f"Failed to update permission {recipient_name} → {share_name}: {e}")
-                raise  # Re-raise exception to fail the entire provisioning process
 
 
 async def _update_pipelines_and_schedules(
@@ -739,27 +394,32 @@ async def _create_pipeline(
                 elif isinstance(schedule, str):
                     schedule_type = schedule.upper()
 
-                await pipeline_repo.create_from_config(
-                    pipeline_id=pipeline_id_db,
-                    share_id=share_id,
-                    share_pack_id=share_pack_id,
-                    pipeline_name=pipeline_name,
-                    databricks_pipeline_id=result.pipeline_id,
-                    asset_name=target_asset,
-                    source_table=source_asset,
-                    target_table=target_asset,
-                    scd_type=pipeline_config.get("scd_type", "2"),
-                    key_columns=pipeline_config.get("key_columns", ""),
-                    schedule_type=schedule_type,
-                    cron_expression=cron_expr,
-                    timezone=timezone,
-                    serverless=pipeline_config.get("serverless", False),
-                    tags=pipeline_config.get("tags", {}),
-                    notification_emails=pipeline_config.get("notification", []),
-                    created_by="orchestrator",
-                )
+                try:
+                    await pipeline_repo.create_from_config(
+                        pipeline_id=pipeline_id_db,
+                        share_id=share_id,
+                        share_pack_id=share_pack_id,
+                        pipeline_name=pipeline_name,
+                        databricks_pipeline_id=result.pipeline_id,
+                        asset_name=target_asset,
+                        source_table=source_asset,
+                        target_table=target_asset,
+                        scd_type=pipeline_config.get("scd_type", "2"),
+                        key_columns=pipeline_config.get("key_columns", ""),
+                        schedule_type=schedule_type,
+                        cron_expression=cron_expr,
+                        timezone=timezone,
+                        serverless=pipeline_config.get("serverless", False),
+                        tags=pipeline_config.get("tags", {}),
+                        notification_emails=pipeline_config.get("notification", []),
+                        created_by="orchestrator",
+                    )
+                    logger.debug(f"Tracked pipeline {pipeline_name} in database (id: {pipeline_id_db})")
+                except Exception as db_error:
+                    logger.warning(
+                        f"Failed to track pipeline {pipeline_name} in database (UPDATE strategy - object should exist): {db_error}"
+                    )
                 created_db_records["pipelines"].append(pipeline_id_db)
-                logger.debug(f"Tracked pipeline {pipeline_name} in database (id: {pipeline_id_db})")
         except Exception as db_error:
             logger.warning(
                 f"Failed to track pipeline {pipeline_name} in database (UPDATE strategy - object should exist): {db_error}"

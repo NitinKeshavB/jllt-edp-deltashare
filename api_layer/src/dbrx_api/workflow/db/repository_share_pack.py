@@ -66,6 +66,7 @@ class SharePackRepository(BaseRepository):
             "tenant_id": tenant_id,
             "project_id": project_id,
             "is_deleted": False,
+            "request_source": "share_pack",
         }
 
         return await self.create_or_update(

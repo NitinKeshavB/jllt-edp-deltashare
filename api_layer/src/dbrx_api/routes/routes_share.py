@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from fastapi import Body
 from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Query
 from fastapi import Request
 from fastapi import Response
 from fastapi import status
@@ -27,6 +28,43 @@ from dbrx_api.schemas.schemas import GetSharesQueryParams
 from dbrx_api.schemas.schemas import GetSharesResponse
 
 ROUTER_SHARE = APIRouter(tags=["Shares"])
+
+
+async def _sync_share_to_db(request: Request, share_name: str, workspace_url: str) -> None:
+    """Best-effort: re-read share from Databricks and sync current state to workflow DB."""
+    if not (hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None):
+        return
+    try:
+        from dbrx_api.dltshr.share import get_share_objects
+        from dbrx_api.dltshr.share import get_share_recipients
+        from dbrx_api.workflow.db.repository_share import ShareRepository
+
+        repo = ShareRepository(request.app.state.domain_db_pool.pool)
+        share_info = get_shares(share_name, workspace_url)
+        if not share_info:
+            return
+        databricks_share_id = str(getattr(share_info, "id", share_name) or share_name)
+        desc = ""
+        if hasattr(share_info, "comment") and share_info.comment:
+            desc = share_info.comment.strip()
+        objects = get_share_objects(share_name=share_name, dltshr_workspace_url=workspace_url)
+        actual_assets = objects.get("tables", []) + objects.get("views", []) + objects.get("schemas", [])
+        actual_recipients = get_share_recipients(share_name=share_name, dltshr_workspace_url=workspace_url)
+        await repo.create_or_upsert_from_api(
+            share_name=share_name,
+            databricks_share_id=databricks_share_id,
+            share_assets=actual_assets,
+            recipients_attached=actual_recipients,
+            description=desc,
+            created_by="api",
+        )
+        logger.info("Synced share state to workflow DB after API update", share_name=share_name)
+    except Exception as db_err:
+        logger.warning(
+            "Best-effort DB sync failed for share (Databricks op succeeded)",
+            share_name=share_name,
+            error=str(db_err),
+        )
 
 
 @ROUTER_SHARE.get(
@@ -188,6 +226,31 @@ async def delete_share_by_name(
             )
         else:
             logger.info("Share deleted successfully", share_name=share_name, status_code=status.HTTP_200_OK)
+            if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+                try:
+                    from dbrx_api.workflow.db.repository_share import ShareRepository
+
+                    repo = ShareRepository(request.app.state.domain_db_pool.pool)
+                    records = await repo.list_by_share_name(share_name)
+                    for rec in records:
+                        await repo.soft_delete(
+                            rec["share_id"],
+                            deleted_by="api",
+                            deletion_reason="Deleted via API (delete share by name)",
+                            request_source="api",
+                        )
+                    if records:
+                        logger.info(
+                            "Soft-deleted share records in data model",
+                            share_name=share_name,
+                            count=len(records),
+                        )
+                except Exception as db_err:
+                    logger.warning(
+                        "Failed to soft-delete share in data model (Databricks delete succeeded)",
+                        share_name=share_name,
+                        error=str(db_err),
+                    )
             return JSONResponse(
                 status_code=status.HTTP_200_OK,
                 content={"message": "Deleted Share successfully!"},
@@ -227,10 +290,17 @@ async def create_share(
     response: Response,
     share_name: str,
     description: str,
-    storage_root: Optional[str] = None,
+    storage_root: Optional[str] = Query(
+        default=None,
+        description="Optional storage root URL for the share. Leave empty or omit to use default storage.",
+    ),
     workspace_url: str = Depends(get_workspace_url),
 ) -> ShareInfo:
     """Create a new Delta Sharing share for Databricks-to-Databricks data sharing."""
+    # Convert empty string to None for storage_root
+    if storage_root is not None and storage_root.strip() == "":
+        storage_root = None
+
     logger.info(
         "Creating share",
         share_name=share_name,
@@ -291,6 +361,25 @@ async def create_share(
 
     response.status_code = status.HTTP_201_CREATED
     logger.info("Share created successfully", share_name=share_name, owner=share_resp.owner)
+    if hasattr(request.app.state, "domain_db_pool") and request.app.state.domain_db_pool is not None:
+        try:
+            from dbrx_api.workflow.db.repository_share import ShareRepository
+
+            repo = ShareRepository(request.app.state.domain_db_pool.pool)
+            databricks_share_id = getattr(share_resp, "id", share_resp.name) or share_name
+            await repo.create_or_upsert_from_api(
+                share_name=share_name,
+                databricks_share_id=str(databricks_share_id),
+                description=description,
+                created_by="api",
+            )
+            logger.info("Logged share to workflow DB", share_name=share_name)
+        except Exception as db_err:
+            logger.warning(
+                "Failed to log share to workflow DB (Databricks create succeeded)",
+                share_name=share_name,
+                error=str(db_err),
+            )
     return share_resp
 
 
@@ -437,6 +526,7 @@ async def add_data_objects_to_share(
 
     response.status_code = status.HTTP_200_OK
     logger.info("Data objects added successfully to share", share_name=share_name)
+    await _sync_share_to_db(request, share_name, workspace_url)
     return result
 
 
@@ -530,6 +620,7 @@ async def revoke_data_objects_from_share(
 
     response.status_code = status.HTTP_200_OK
     logger.info("Data objects revoked successfully from share", share_name=share_name)
+    await _sync_share_to_db(request, share_name, workspace_url)
     return result
 
 
@@ -610,6 +701,7 @@ async def add_recipient_to_share(
     # Success - return UpdateSharePermissionsResponse object
     response.status_code = status.HTTP_200_OK
     logger.info("Recipient added successfully to share", share_name=share_name, recipient_name=recipient_name)
+    await _sync_share_to_db(request, share_name, workspace_url)
     return result
 
 
@@ -685,4 +777,5 @@ async def remove_recipients_from_share(
     # Success - return UpdateSharePermissionsResponse object
     response.status_code = status.HTTP_200_OK
     logger.info("Recipient removed successfully from share", share_name=share_name, recipient_name=recipient_name)
+    await _sync_share_to_db(request, share_name, workspace_url)
     return result

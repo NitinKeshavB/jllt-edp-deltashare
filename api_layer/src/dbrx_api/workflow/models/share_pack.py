@@ -35,9 +35,14 @@ class SharePackMetadata(BaseModel):
     executive_team: str  # AD group or comma-separated emails
     approver_status: str = "approved"  # approved | declined | request_more_info | pending
     requestor: str  # Email of person submitting
-    strategy: str = "NEW"  # NEW or UPDATE
+    strategy: str = (
+        "NEW"  # Optional. NEW (default) or UPDATE = provision; DELETE = teardown. Omit for normal provisioning.
+    )
     workspace_url: str  # Databricks workspace URL for provisioning (required)
     servicenow_ticket: str = Field(alias="servicenow")  # ServiceNow ticket number or link (required)
+    project_name: Optional[str] = None  # Project name (used for tenant/project resolution and stable name)
+    description: Optional[str] = None  # Share pack description
+    client: Optional[str] = None  # Client name (e.g. customer identifier)
 
     class Config:
         populate_by_name = True  # Allow both 'servicenow_ticket' and 'servicenow'
@@ -61,11 +66,13 @@ class SharePackMetadata(BaseModel):
 
     @field_validator("strategy")
     @classmethod
-    def validate_strategy(cls, v: str) -> str:
-        """Validate strategy is NEW or UPDATE."""
-        v_upper = v.upper()
-        if v_upper not in ("NEW", "UPDATE"):
-            raise ValueError("strategy must be NEW or UPDATE")
+    def validate_strategy(cls, v: Optional[str]) -> str:
+        """Validate strategy is NEW, UPDATE, or DELETE. Default NEW when omitted or empty."""
+        if not v or not str(v).strip():
+            return "NEW"
+        v_upper = str(v).strip().upper()
+        if v_upper not in ("NEW", "UPDATE", "DELETE"):
+            raise ValueError("strategy must be NEW, UPDATE, or DELETE")
         return v_upper
 
     @field_validator("approver_status")
@@ -76,6 +83,21 @@ class SharePackMetadata(BaseModel):
         if v_lower not in ("approved", "declined", "request_more_info", "pending"):
             raise ValueError("approver_status must be approved, declined, request_more_info, or pending")
         return v_lower
+
+    @field_validator("project_name", "description", "client")
+    @classmethod
+    def validate_optional_string_fields(cls, v: Optional[str], info) -> Optional[str]:
+        """Strip and validate length for optional metadata fields; empty string becomes None."""
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        field_name = info.field_name
+        max_len = {"project_name": 255, "description": 2000, "client": 255}.get(field_name, 500)
+        if len(s) > max_len:
+            raise ValueError(f"{field_name} must be at most {max_len} characters (got {len(s)})")
+        return s
 
     @field_validator("requestor", "contact_email", "configurator", "approver", "executive_team")
     @classmethod
@@ -403,9 +425,9 @@ class ShareConfig(BaseModel):
 
     name: str  # Share name
     description: Optional[str] = Field(default="", alias="comment")  # Share description/comment (accepts both)
-    share_assets: List[str]  # List of assets (catalog, catalog.schema, catalog.schema.table, etc.)
-    recipients: List[str]  # List of recipient names (references RecipientConfig.name)
-    delta_share: DeltaShareConfig  # Target workspace config
+    share_assets: List[str] = Field(default_factory=list)  # List of assets (catalog.schema.table, etc.)
+    recipients: List[str] = Field(default_factory=list)  # List of recipient names (references RecipientConfig.name)
+    delta_share: DeltaShareConfig  # Target workspace config (required when pipelines present; use placeholder if schedules-only)
     pipelines: List[PipelineConfig] = Field(default_factory=list)  # Pipeline configs
 
     class Config:
@@ -419,22 +441,6 @@ class ShareConfig(BaseModel):
             raise ValueError("share name cannot be empty")
         return v.strip()
 
-    @field_validator("share_assets")
-    @classmethod
-    def validate_share_assets(cls, v: List[str]) -> List[str]:
-        """Validate assets list is not empty."""
-        if not v:
-            raise ValueError("share_assets cannot be empty")
-        return v
-
-    @field_validator("recipients")
-    @classmethod
-    def validate_recipients(cls, v: List[str]) -> List[str]:
-        """Validate recipients list is not empty."""
-        if not v:
-            raise ValueError("recipients list cannot be empty")
-        return v
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # Main Share Pack Model
@@ -445,53 +451,42 @@ class SharePackConfig(BaseModel):
     """Complete share pack configuration.
 
     This is the top-level model that represents the entire YAML/Excel file.
+    You can pass recipients alone, shares alone, or schedules alone (shares with pipeline schedules).
     """
 
     metadata: SharePackMetadata
-    recipient: List[RecipientConfig]
-    share: List[ShareConfig]
+    recipient: List[RecipientConfig] = Field(default_factory=list)
+    share: List[ShareConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_has_recipients_or_shares(self):
+        """At least one of recipient or share section must be non-empty."""
+        if not self.recipient and not self.share:
+            raise ValueError(
+                "Share pack must contain at least one of: 'recipient' or 'share'. "
+                "You can pass recipients alone, shares alone, or schedules alone (shares with pipelines)."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_recipient_references(self):
         """Ensure all recipient names referenced in shares exist in YAML.
 
         Note: Recipients not in YAML will be checked against Databricks during provisioning.
-        This allows referencing existing Databricks recipients without re-declaring them.
         """
-        # This validation is now informational only - actual validation happens during provisioning
-        # where we can check if the recipient exists in Databricks
-
         return self
 
     @model_validator(mode="after")
     def validate_unique_names(self):
         """Ensure recipient and share names are unique."""
-        # Check recipient names
-        recipient_names = [r.name for r in self.recipient]
-        if len(recipient_names) != len(set(recipient_names)):
-            duplicates = {name for name in recipient_names if recipient_names.count(name) > 1}
-            raise ValueError(f"Duplicate recipient names: {duplicates}")
-
-        # Check share names
-        share_names = [s.name for s in self.share]
-        if len(share_names) != len(set(share_names)):
-            duplicates = {name for name in share_names if share_names.count(name) > 1}
-            raise ValueError(f"Duplicate share names: {duplicates}")
-
+        if self.recipient:
+            recipient_names = [r.name for r in self.recipient]
+            if len(recipient_names) != len(set(recipient_names)):
+                duplicates = {name for name in recipient_names if recipient_names.count(name) > 1}
+                raise ValueError(f"Duplicate recipient names: {duplicates}")
+        if self.share:
+            share_names = [s.name for s in self.share]
+            if len(share_names) != len(set(share_names)):
+                duplicates = {name for name in share_names if share_names.count(name) > 1}
+                raise ValueError(f"Duplicate share names: {duplicates}")
         return self
-
-    @field_validator("recipient")
-    @classmethod
-    def validate_has_recipients(cls, v: List[RecipientConfig]) -> List[RecipientConfig]:
-        """Ensure at least one recipient exists."""
-        if not v:
-            raise ValueError("At least one recipient required")
-        return v
-
-    @field_validator("share")
-    @classmethod
-    def validate_has_shares(cls, v: List[ShareConfig]) -> List[ShareConfig]:
-        """Ensure at least one share exists."""
-        if not v:
-            raise ValueError("At least one share required")
-        return v

@@ -36,6 +36,7 @@ _datadog_handler: Optional[any] = None
 
 # Loggers configuration runs at the start of the application -- src/files_api/__init__.py
 def configure_logger(
+    dd_service: str,
     enable_blob_logging: bool = False,
     azure_storage_url: Optional[str] = None,
     azure_storage_sas_url: Optional[str] = None,
@@ -52,6 +53,7 @@ def configure_logger(
     Configure loguru logger with multiple sinks.
 
     Args:
+        dd_service: Datadog service name (required, should be passed from settings)
         enable_blob_logging: Enable Azure Blob Storage logging
         azure_storage_url: Azure Storage Account URL
         azure_storage_sas_url: Azure Storage SAS URL for authentication
@@ -61,8 +63,8 @@ def configure_logger(
         postgresql_table: PostgreSQL table name for logs
         postgresql_min_level: Minimum log level for PostgreSQL
         enable_datadog_logging: Enable Datadog logging
-        dd_api_key: Datadog API key
-        dd_env: Environment name for Datadog
+        dd_api_key: Datadog API key (required if enable_datadog_logging is True)
+        dd_env: Environment name for Datadog (optional, auto-detected if not provided)
     """
     global _azure_blob_handler, _postgresql_handler, _datadog_handler
 
@@ -141,13 +143,14 @@ def configure_logger(
             logger.warning(f"Failed to initialize PostgreSQL logging: {e}")
 
     # Add Datadog handler if enabled
-    if enable_datadog_logging:
+    if enable_datadog_logging and dd_api_key:
         try:
             if DatadogLogHandler is None:
                 logger.warning("DatadogLogHandler not available - Datadog logging disabled")
             else:
                 _datadog_handler = DatadogLogHandler(
                     api_key=dd_api_key,
+                    service_name=dd_service,
                     env=dd_env,
                 )
                 logger.add(

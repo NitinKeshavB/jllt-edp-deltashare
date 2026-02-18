@@ -28,9 +28,6 @@ except ImportError:
 
 from dbrx_api.dbrx_auth.token_gen import get_auth_token
 from dbrx_api.monitoring.logger import logger
-from dbrx_api.settings import Settings
-
-settings = Settings()
 
 
 def list_pipelines(
@@ -779,13 +776,13 @@ def create_pipeline(
             catalog=target_catalog_name,
             target=target_schema_name,
             configuration=configuration,
-            root_path="/Workspace/Shared/.bundle/dab_project/prod/files/citibike_etl/dlt/pattern",
+            root_path="/Workspace/Shared/.bundle/dab_project/prod/files/etl/dlt/pattern",
             continuous=False,
             serverless=serverless,
             libraries=[
                 PipelineLibrary(
                     file=FileLibrary(
-                        path="/Workspace/Shared/.bundle/dab_project/prod/files/citibike_etl/dlt/pattern/pattern-load.py"
+                        path="/Workspace/Shared/.bundle/dab_project/prod/files/etl/dlt/pattern/pattern-load.py"
                     )
                 )
             ],
