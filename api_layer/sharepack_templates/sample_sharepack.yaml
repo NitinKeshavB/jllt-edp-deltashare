@@ -50,9 +50,27 @@ share:
   # ========================================
   - name: sales_analytics_share
     comment: "Q1 sales analytics data - individual table assets with explicit source assets"
+
+    # Recipient Management - TWO APPROACHES (choose one):
+
+    # Approach 1 (Declarative): Specify complete desired state
+    # Use for UPDATE strategy - system will diff and add/remove as needed
     recipients:
       - external_partner_recipient
       - internal_analytics_team
+
+    # Approach 2 (Explicit): Specify incremental changes
+    # Use for precise control over adds/removes in a single operation
+    # recipients_to_add:
+    #   - external_partner_recipient
+    # recipients_to_remove:
+    #   - old_recipient_to_remove
+
+    # VALIDATION RULES:
+    # 1. Same recipient CANNOT be in both recipients_to_add AND recipients_to_remove
+    # 2. Same recipient CANNOT be in both recipients (declarative) AND recipients_to_remove (explicit)
+    #    - This is a logical conflict: you can't say "share should have X" and "remove X" simultaneously
+    # 3. Choose ONE approach per share - either declarative OR explicit (but not both)
 
     # Share assets - 3-part names (catalog.schema.table)
     # Each asset will have a corresponding pipeline

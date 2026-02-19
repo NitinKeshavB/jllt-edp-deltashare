@@ -118,11 +118,13 @@ class BaseRepository:
         fields: Dict[str, Any],
         created_by: str,
         change_reason: str = "",
+        skip_if_unchanged: bool = True,
     ) -> UUID:
         """
-        Create new or update existing entity (SCD2).
+        Create new or update existing entity (SCD2) with change detection.
 
-        If entity exists, expires current version and inserts new version.
+        If entity exists and data has changed, expires current version and inserts new version.
+        If entity exists and data is unchanged, returns existing record_id without versioning.
         If entity doesn't exist, creates first version.
 
         Args:
@@ -130,12 +132,17 @@ class BaseRepository:
             fields: Dict of fields to set (excluding SCD2 columns and entity_id)
             created_by: Who/what is creating this version
             change_reason: Why this version is being created
+            skip_if_unchanged: If True, skip versioning if data hasn't changed (default: True)
 
         Returns:
-            record_id (UUID) of the new version
+            record_id (UUID) of the version (existing if unchanged, new if changed/created)
         """
         async with self.pool.acquire() as conn:
             async with conn.transaction():
+                # Check if data changed before creating version
+                current_row = await get_current_version(conn, self.table, self.entity_id_col, entity_id, False)
+                is_new = current_row is None
+
                 record_id = await expire_and_insert_scd2(
                     conn,
                     self.table,
@@ -144,24 +151,32 @@ class BaseRepository:
                     fields,
                     created_by,
                     change_reason,
+                    skip_if_unchanged=skip_if_unchanged,
                 )
 
-                # Write to audit trail inside a savepoint so that audit failures
-                # do NOT abort the outer transaction (and roll back the SCD2 insert).
-                # In PostgreSQL, a failed statement aborts the entire transaction even
-                # if the Python exception is caught. A savepoint isolates the failure.
-                try:
-                    async with conn.transaction():
-                        await self._write_audit(
-                            conn,
-                            entity_id,
-                            "CREATED" if not change_reason else "UPDATED",
-                            created_by,
-                            None,
-                            fields,
-                        )
-                except Exception as e:
-                    logger.opt(exception=True).warning(f"Audit trail write failed (SCD2 operation preserved): {e}")
+                # Check if a new version was actually created
+                new_row = await get_current_version(conn, self.table, self.entity_id_col, entity_id, False)
+                version_created = is_new or (
+                    new_row and new_row.get("record_id") != current_row.get("record_id") if current_row else True
+                )
+
+                # Write to audit trail only if a new version was created
+                # Skip audit if data was unchanged (no version created)
+                if version_created:
+                    try:
+                        async with conn.transaction():
+                            await self._write_audit(
+                                conn,
+                                entity_id,
+                                "CREATED" if is_new else "UPDATED",
+                                created_by,
+                                current_row if not is_new else None,
+                                fields,
+                            )
+                    except Exception as e:
+                        logger.opt(exception=True).warning(f"Audit trail write failed (SCD2 operation preserved): {e}")
+                else:
+                    logger.debug(f"Skipping audit trail for {self.table}.{entity_id}: no changes detected")
 
                 return record_id
 

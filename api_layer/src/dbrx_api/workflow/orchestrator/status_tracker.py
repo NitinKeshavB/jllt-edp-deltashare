@@ -42,18 +42,23 @@ class StatusTracker:
         )
         logger.info(f"[{self.share_pack_id}] {message}")
 
-    async def complete(self):
-        """Mark share pack as COMPLETED."""
+    async def complete(self, message: str = "All steps completed successfully"):
+        """
+        Mark share pack as COMPLETED.
+
+        Args:
+            message: Status message (default: "All steps completed successfully")
+        """
         from dbrx_api.workflow.db.repository_share_pack import SharePackRepository
 
         repo = SharePackRepository(self.pool)
         await repo.update_status(
             self.share_pack_id,
             "COMPLETED",
-            provisioning_status="All steps completed successfully",
+            provisioning_status=message,
             updated_by="orchestrator",
         )
-        logger.success(f"[{self.share_pack_id}] Provisioning COMPLETED")
+        logger.success(f"[{self.share_pack_id}] Provisioning COMPLETED: {message}")
 
     async def fail(self, error: str, provisioning_status: str = "Provisioning failed"):
         """

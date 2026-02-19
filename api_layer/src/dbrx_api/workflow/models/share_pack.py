@@ -257,6 +257,34 @@ class RecipientConfig(BaseModel):
                 raise ValueError(f"D2O recipient '{self.name}' cannot have recipient_databricks_org")
         return self
 
+    @model_validator(mode="after")
+    def validate_ip_lists_no_overlap(self):
+        """Validate that recipient_ips_to_add and recipient_ips_to_remove do not overlap."""
+        if not self.recipient_ips_to_add or not self.recipient_ips_to_remove:
+            # No overlap possible if either list is empty
+            return self
+
+        # Normalize IPs (strip whitespace, lowercase)
+        ips_to_add = {ip.strip().lower() for ip in self.recipient_ips_to_add if ip.strip()}
+        ips_to_remove = {ip.strip().lower() for ip in self.recipient_ips_to_remove if ip.strip()}
+
+        # Find overlapping IPs
+        overlapping_ips = ips_to_add & ips_to_remove
+
+        if overlapping_ips:
+            overlapping_list = sorted(overlapping_ips)
+            raise ValueError(
+                f"Recipient '{self.name}': Same IP address(es) cannot be in both "
+                f"'recipient_ips_to_add' and 'recipient_ips_to_remove'.\n"
+                f"  Conflicting IPs: {', '.join(overlapping_list)}\n\n"
+                f"Please choose one action per IP:\n"
+                f"  - To ADD an IP: include it ONLY in 'recipient_ips_to_add'\n"
+                f"  - To REMOVE an IP: include it ONLY in 'recipient_ips_to_remove'\n\n"
+                f"You cannot add and remove the same IP in a single operation."
+            )
+
+        return self
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # Share Section
@@ -425,8 +453,23 @@ class ShareConfig(BaseModel):
 
     name: str  # Share name
     description: Optional[str] = Field(default="", alias="comment")  # Share description/comment (accepts both)
-    share_assets: List[str] = Field(default_factory=list)  # List of assets (catalog.schema.table, etc.)
-    recipients: List[str] = Field(default_factory=list)  # List of recipient names (references RecipientConfig.name)
+
+    # Share Asset Management - Two approaches:
+    # Approach 1: Declarative - specify complete desired state (for UPDATE strategy)
+    share_assets: List[str] = Field(default_factory=list)  # Complete list of assets that should be in share
+
+    # Approach 2: Explicit - specify incremental changes (for NEW strategy and UPDATE strategy)
+    share_assets_to_add: List[str] = Field(default_factory=list)  # Assets to add to share
+    share_assets_to_remove: List[str] = Field(default_factory=list)  # Assets to remove from share
+
+    # Recipient Management - Two approaches:
+    # Approach 1: Declarative - specify complete desired state (for UPDATE strategy)
+    recipients: List[str] = Field(default_factory=list)  # Complete list of recipients that should be attached
+
+    # Approach 2: Explicit - specify incremental changes (for NEW strategy and UPDATE strategy)
+    recipients_to_add: List[str] = Field(default_factory=list)  # Recipients to add to share
+    recipients_to_remove: List[str] = Field(default_factory=list)  # Recipients to remove from share
+
     delta_share: DeltaShareConfig  # Target workspace config (required when pipelines present; use placeholder if schedules-only)
     pipelines: List[PipelineConfig] = Field(default_factory=list)  # Pipeline configs
 
@@ -440,6 +483,116 @@ class ShareConfig(BaseModel):
         if not v or not v.strip():
             raise ValueError("share name cannot be empty")
         return v.strip()
+
+    @model_validator(mode="after")
+    def validate_recipient_lists_no_overlap(self):
+        """
+        Validate that recipient lists do not have logical conflicts.
+
+        Checks:
+        1. recipients_to_add vs recipients_to_remove (explicit approach conflict)
+        2. recipients vs recipients_to_remove (declarative vs explicit conflict)
+        """
+        # Check 1: Explicit approach conflict (recipients_to_add vs recipients_to_remove)
+        if self.recipients_to_add and self.recipients_to_remove:
+            # Normalize recipient names (strip whitespace, lowercase for comparison)
+            recipients_to_add = {name.strip().lower() for name in self.recipients_to_add if name.strip()}
+            recipients_to_remove = {name.strip().lower() for name in self.recipients_to_remove if name.strip()}
+
+            # Find overlapping recipients
+            overlapping_recipients = recipients_to_add & recipients_to_remove
+
+            if overlapping_recipients:
+                overlapping_list = sorted(overlapping_recipients)
+                raise ValueError(
+                    f"Share '{self.name}': Same recipient(s) cannot be in both "
+                    f"'recipients_to_add' and 'recipients_to_remove'.\n"
+                    f"  Conflicting recipients: {', '.join(overlapping_list)}\n\n"
+                    f"Please choose one action per recipient:\n"
+                    f"  - To ADD a recipient: include it ONLY in 'recipients_to_add'\n"
+                    f"  - To REMOVE a recipient: include it ONLY in 'recipients_to_remove'\n\n"
+                    f"You cannot add and remove the same recipient in a single operation."
+                )
+
+        # Check 2: Declarative vs explicit conflict (recipients vs recipients_to_remove)
+        if self.recipients and self.recipients_to_remove:
+            # Normalize recipient names
+            recipients_declarative = {name.strip().lower() for name in self.recipients if name.strip()}
+            recipients_to_remove = {name.strip().lower() for name in self.recipients_to_remove if name.strip()}
+
+            # Find conflicting recipients
+            conflicting_recipients = recipients_declarative & recipients_to_remove
+
+            if conflicting_recipients:
+                conflicting_list = sorted(conflicting_recipients)
+                raise ValueError(
+                    f"Share '{self.name}': Same recipient(s) cannot be in both "
+                    f"'recipients' (declarative) and 'recipients_to_remove' (explicit).\n"
+                    f"  Conflicting recipients: {', '.join(conflicting_list)}\n\n"
+                    f"This is a logical conflict:\n"
+                    f"  - 'recipients' declares: \"The share SHOULD HAVE these recipients\"\n"
+                    f"  - 'recipients_to_remove' says: \"REMOVE these recipients from the share\"\n\n"
+                    f"Please choose one approach:\n"
+                    f"  - DECLARATIVE: Use 'recipients' to specify the complete desired state (remove conflicting recipient from this list to delete it)\n"
+                    f"  - EXPLICIT: Use 'recipients_to_add' and 'recipients_to_remove' for incremental changes (don't use 'recipients' field)"
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_share_asset_lists_no_overlap(self):
+        """
+        Validate that share asset lists do not have logical conflicts.
+
+        Checks:
+        1. share_assets_to_add vs share_assets_to_remove (explicit approach conflict)
+        2. share_assets vs share_assets_to_remove (declarative vs explicit conflict)
+        """
+        # Check 1: Explicit approach conflict (share_assets_to_add vs share_assets_to_remove)
+        if self.share_assets_to_add and self.share_assets_to_remove:
+            # Normalize asset names (strip whitespace, lowercase for comparison)
+            assets_to_add = {asset.strip().lower() for asset in self.share_assets_to_add if asset.strip()}
+            assets_to_remove = {asset.strip().lower() for asset in self.share_assets_to_remove if asset.strip()}
+
+            # Find overlapping assets
+            overlapping_assets = assets_to_add & assets_to_remove
+
+            if overlapping_assets:
+                overlapping_list = sorted(overlapping_assets)
+                raise ValueError(
+                    f"Share '{self.name}': Same asset(s) cannot be in both "
+                    f"'share_assets_to_add' and 'share_assets_to_remove'.\n"
+                    f"  Conflicting assets: {', '.join(overlapping_list)}\n\n"
+                    f"Please choose one action per asset:\n"
+                    f"  - To ADD an asset: include it ONLY in 'share_assets_to_add'\n"
+                    f"  - To REMOVE an asset: include it ONLY in 'share_assets_to_remove'\n\n"
+                    f"You cannot add and remove the same asset in a single operation."
+                )
+
+        # Check 2: Declarative vs explicit conflict (share_assets vs share_assets_to_remove)
+        if self.share_assets and self.share_assets_to_remove:
+            # Normalize asset names
+            assets_declarative = {asset.strip().lower() for asset in self.share_assets if asset.strip()}
+            assets_to_remove = {asset.strip().lower() for asset in self.share_assets_to_remove if asset.strip()}
+
+            # Find conflicting assets
+            conflicting_assets = assets_declarative & assets_to_remove
+
+            if conflicting_assets:
+                conflicting_list = sorted(conflicting_assets)
+                raise ValueError(
+                    f"Share '{self.name}': Same asset(s) cannot be in both "
+                    f"'share_assets' (declarative) and 'share_assets_to_remove' (explicit).\n"
+                    f"  Conflicting assets: {', '.join(conflicting_list)}\n\n"
+                    f"This is a logical conflict:\n"
+                    f"  - 'share_assets' declares: \"The share SHOULD HAVE these assets\"\n"
+                    f"  - 'share_assets_to_remove' says: \"REMOVE these assets from the share\"\n\n"
+                    f"Please choose one approach:\n"
+                    f"  - DECLARATIVE: Use 'share_assets' to specify the complete desired state (remove conflicting asset from this list to delete it)\n"
+                    f"  - EXPLICIT: Use 'share_assets_to_add' and 'share_assets_to_remove' for incremental changes (don't use 'share_assets' field)"
+                )
+
+        return self
 
 
 # ════════════════════════════════════════════════════════════════════════════

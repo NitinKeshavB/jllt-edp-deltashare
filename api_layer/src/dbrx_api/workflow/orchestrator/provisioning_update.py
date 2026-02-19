@@ -30,6 +30,7 @@ from dbrx_api.workflow.db.repository_share import ShareRepository
 from dbrx_api.workflow.orchestrator.db_persist import persist_pipelines_to_db
 from dbrx_api.workflow.orchestrator.db_persist import persist_recipients_to_db
 from dbrx_api.workflow.orchestrator.db_persist import persist_shares_to_db
+from dbrx_api.workflow.orchestrator.pipeline_cleanup import cleanup_orphaned_pipelines
 from dbrx_api.workflow.orchestrator.pipeline_flow import _rollback_pipelines
 from dbrx_api.workflow.orchestrator.pipeline_flow import ensure_pipelines
 from dbrx_api.workflow.orchestrator.provisioning import validate_metadata
@@ -101,7 +102,7 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
         logger.info(f"Target workspace: {workspace_url}")
 
         # Validate metadata before proceeding
-        current_step = "Step 0/7: Validating metadata and configuration"
+        current_step = "Step 0/8: Validating metadata and configuration"
         await tracker.update(current_step)
         validate_metadata(config["metadata"])
         validate_sharepack_config(config)
@@ -113,12 +114,12 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
         logger.info(f"Update scope: recipients={has_recipients}, shares={has_shares}")
 
         # Step 1: Initialize
-        current_step = "Step 1/7: Initializing update"
+        current_step = "Step 1/8: Initializing update"
         await tracker.update(current_step)
 
         # Step 2: Ensure recipients (Databricks only — no DB writes)
         if has_recipients:
-            current_step = "Step 2/7: Creating/updating recipients"
+            current_step = "Step 2/8: Creating/updating recipients"
             await tracker.update(current_step)
             await ensure_recipients(
                 workspace_url=workspace_url,
@@ -129,11 +130,11 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
             )
         else:
             logger.info("No recipients section - skipping recipient updates")
-            await tracker.update("Step 2/7: Skipping recipients (not in config)")
+            await tracker.update("Step 2/8: Skipping recipients (not in config)")
 
         # Step 3: Ensure shares (Databricks only — no DB writes)
         if has_shares:
-            current_step = "Step 3/7: Creating/updating shares"
+            current_step = "Step 3/8: Creating/updating shares"
             await tracker.update(current_step)
             await ensure_shares(
                 workspace_url=workspace_url,
@@ -144,11 +145,11 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
             )
         else:
             logger.info("No shares section - skipping share updates")
-            await tracker.update("Step 3/7: Skipping shares (not in config)")
+            await tracker.update("Step 3/8: Skipping shares (not in config)")
 
         # Step 4: Ensure pipelines (Databricks only — no DB writes)
         if has_shares:
-            current_step = "Step 4/7: Updating pipelines"
+            current_step = "Step 4/8: Updating pipelines"
             await tracker.update(current_step)
             await ensure_pipelines(
                 workspace_url=workspace_url,
@@ -159,14 +160,14 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
             )
 
             # Step 5: Report schedule updates
-            await tracker.update("Step 5/7: Pipeline schedules updated")
+            await tracker.update("Step 5/8: Pipeline schedules updated")
             logger.info(f"Schedule updates: {len(updated_resources.get('schedules', []))} schedules created/updated")
         else:
-            await tracker.update("Step 4/7: Skipping pipelines (not in config)")
-            await tracker.update("Step 5/7: Skipping schedules (no pipelines)")
+            await tracker.update("Step 4/8: Skipping pipelines (not in config)")
+            await tracker.update("Step 5/8: Skipping schedules (no pipelines)")
 
         # ALL Databricks ops succeeded → persist to DB
-        current_step = "Step 6/7: Persisting to database"
+        current_step = "Step 6/8: Persisting to database"
         await tracker.update(current_step)
 
         configurator = config["metadata"]["configurator"]
@@ -180,16 +181,72 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
                 pipeline_db_entries, share_pack_id, share_name_to_id, share_repo, pipeline_repo
             )
 
-        # Mark as completed
-        await tracker.complete()
+        # Step 7: Clean up orphaned pipelines (whose assets were removed from shares)
+        # Re-enabled with enhanced debug logging to diagnose share lookup issues
+        if has_shares:
+            current_step = "Step 7/8: Cleaning up orphaned pipelines"
+            await tracker.update(current_step)
+            logger.info("Starting pipeline cleanup with DEBUG logging enabled")
+            try:
+                await cleanup_orphaned_pipelines(
+                    share_pack_id=share_pack_id,
+                    workspace_url=workspace_url,
+                    pipeline_repo=pipeline_repo,
+                    share_repo=share_repo,
+                )
+            except Exception as cleanup_err:
+                logger.opt(exception=True).warning(f"Pipeline cleanup failed (non-fatal): {cleanup_err}")
+        else:
+            await tracker.update("Step 7/8: Skipping pipeline cleanup")
 
-        logger.success(f"Share pack {share_pack_id} updated successfully")
-        logger.info(
-            f"Updated: {len(updated_resources['recipients'])} recipients, "
-            f"{len(updated_resources['shares'])} shares, "
-            f"{len(updated_resources['pipelines'])} pipelines, "
-            f"{len(updated_resources['schedules'])} schedules"
-        )
+        # Determine if any changes were made
+        # Check if all db_entries have action='unchanged' (no changes)
+        all_unchanged = True
+        total_created = 0
+        total_updated = 0
+
+        for entry in recipient_db_entries:
+            action = entry.get("action", "")
+            if action == "created":
+                total_created += 1
+                all_unchanged = False
+            elif action == "updated":
+                total_updated += 1
+                all_unchanged = False
+
+        for entry in share_db_entries:
+            action = entry.get("action", "")
+            if action == "created":
+                total_created += 1
+                all_unchanged = False
+            elif action == "updated":
+                total_updated += 1
+                all_unchanged = False
+
+        for entry in pipeline_db_entries:
+            action = entry.get("action", "")
+            if action == "created":
+                total_created += 1
+                all_unchanged = False
+            elif action == "updated":
+                total_updated += 1
+                all_unchanged = False
+
+        # Mark as completed with appropriate message
+        if all_unchanged:
+            completion_message = "Already up to date with share pack data"
+            logger.info(f"Share pack {share_pack_id} is already up to date - no changes needed")
+        else:
+            completion_message = f"All steps completed successfully ({total_created} created, {total_updated} updated)"
+            logger.success(f"Share pack {share_pack_id} updated successfully")
+            logger.info(
+                f"Updated: {len(updated_resources['recipients'])} recipients, "
+                f"{len(updated_resources['shares'])} shares, "
+                f"{len(updated_resources['pipelines'])} pipelines, "
+                f"{len(updated_resources['schedules'])} schedules"
+            )
+
+        await tracker.complete(completion_message)
 
     except Exception as e:
         await tracker.fail(str(e), current_step or "Provisioning failed")

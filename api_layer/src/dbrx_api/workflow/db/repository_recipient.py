@@ -16,6 +16,36 @@ import asyncpg
 from dbrx_api.workflow.db.repository_base import BaseRepository
 
 
+def _normalize_json_data(data: Any) -> Any:
+    """
+    Normalize data for consistent JSON serialization.
+
+    - Sorts lists to prevent order-based false positives
+    - Sorts dict keys (json.dumps does this with sort_keys=True)
+    - Removes duplicates from lists
+
+    Args:
+        data: Data to normalize (list, dict, or other)
+
+    Returns:
+        Normalized data
+    """
+    if isinstance(data, list):
+        # Sort and deduplicate list (preserve strings, numbers, etc.)
+        try:
+            # Remove duplicates while preserving order, then sort
+            unique_items = list(dict.fromkeys(data))
+            return sorted(unique_items)
+        except TypeError:
+            # If items aren't comparable (mixed types), just deduplicate
+            return list(dict.fromkeys(data))
+    elif isinstance(data, dict):
+        # Recursively normalize nested structures
+        return {k: _normalize_json_data(v) for k, v in data.items()}
+    else:
+        return data
+
+
 class RecipientRepository(BaseRepository):
     """Recipient repository with domain-specific queries."""
 
@@ -73,7 +103,7 @@ class RecipientRepository(BaseRepository):
             "recipient_contact_email": recipient_contact_email,
             "recipient_type": recipient_type,
             "recipient_databricks_org": recipient_databricks_org,
-            "client_ip_addresses": json.dumps(ip_access_list or []),
+            "client_ip_addresses": json.dumps(_normalize_json_data(ip_access_list or [])),
             "token_expiry_days": token_expiry_days,
             "token_rotation": token_rotation_enabled,
             "description": description or "",
@@ -149,7 +179,7 @@ class RecipientRepository(BaseRepository):
             "recipient_contact_email": recipient_contact_email,
             "recipient_type": recipient_type,
             "recipient_databricks_org": recipient_databricks_org,
-            "client_ip_addresses": json.dumps(ip_access_list or []),
+            "client_ip_addresses": json.dumps(_normalize_json_data(ip_access_list or [])),
             "token_expiry_days": token_expiry_days,
             "token_rotation": token_rotation_enabled,
             "description": description or "",
@@ -199,7 +229,7 @@ class RecipientRepository(BaseRepository):
             "recipient_contact_email": recipient_contact_email or "",
             "recipient_type": recipient_type,
             "recipient_databricks_org": recipient_databricks_org or "",
-            "client_ip_addresses": json.dumps(ip_access_list or []),
+            "client_ip_addresses": json.dumps(_normalize_json_data(ip_access_list or [])),
             "token_expiry_days": token_expiry,
             "token_rotation": token_rotation_val,
             "description": description or "",

@@ -163,9 +163,18 @@ def validate_sharepack_config(config: Dict[str, Any]) -> None:
                 raise ValueError(
                     f"Share '{share_name}': delta_share.ext_schema_name is required when pipelines are defined"
                 )
+            # Validate recipients (support both declarative and explicit approaches)
             recipients = share_config.get("recipients")
-            if not isinstance(recipients, list):
+            recipients_to_add = share_config.get("recipients_to_add")
+            recipients_to_remove = share_config.get("recipients_to_remove")
+
+            # Check that at least one recipient field is valid
+            if recipients is not None and not isinstance(recipients, list):
                 raise ValueError(f"Share '{share_name}': 'recipients' must be a list (can be empty)")
+            if recipients_to_add is not None and not isinstance(recipients_to_add, list):
+                raise ValueError(f"Share '{share_name}': 'recipients_to_add' must be a list")
+            if recipients_to_remove is not None and not isinstance(recipients_to_remove, list):
+                raise ValueError(f"Share '{share_name}': 'recipients_to_remove' must be a list")
             for pipe in pipelines:
                 if not isinstance(pipe, dict):
                     continue
@@ -331,6 +340,54 @@ def validate_metadata(metadata: Dict[str, Any]) -> None:
     except Exception as e:
         raise ValueError(f"Invalid workspace_url: {e}")
 
+    # 6. Validate authentication token works for this workspace
+    logger.info("Validating authentication token for workspace...")
+    try:
+        from datetime import datetime
+        from datetime import timezone
+
+        from databricks.sdk import WorkspaceClient
+
+        from dbrx_api.dbrx_auth.token_gen import get_auth_token
+
+        # Generate token
+        session_token = get_auth_token(datetime.now(timezone.utc))[0]
+
+        # Create client and test with a lightweight API call
+        w_client = WorkspaceClient(host=workspace_url, token=session_token)
+
+        # Test authentication by listing recipients (limit 1 for speed)
+        # This verifies: token is valid, workspace recognizes token, service principal has permissions
+        try:
+            list(w_client.recipients.list(max_results=1))
+            logger.info(f"✓ Authentication token verified for workspace: {workspace_url}")
+        except Exception as auth_error:
+            auth_msg = str(auth_error)
+            if "Invalid Token" in auth_msg or "400" in auth_msg:
+                raise ValueError(
+                    f"Authentication token does not work for workspace {workspace_url}.\n"
+                    f"  Common causes:\n"
+                    f"  1. Token generated for different account (check client_id/account_id in .env)\n"
+                    f"  2. Service principal not added to this workspace\n"
+                    f"  3. Wrong workspace URL in YAML metadata\n"
+                    f"  Original error: {auth_msg}"
+                )
+            elif "403" in auth_msg or "PermissionDenied" in auth_msg:
+                raise ValueError(
+                    f"Service principal lacks permissions in workspace {workspace_url}.\n"
+                    f"  Required: 'Metastore Admin' or 'Account Admin' role\n"
+                    f"  Original error: {auth_msg}"
+                )
+            else:
+                # Re-raise other errors
+                raise ValueError(f"Authentication test failed for {workspace_url}: {auth_msg}")
+
+    except ValueError:
+        raise
+    except Exception as test_error:
+        logger.warning(f"Could not test authentication (proceeding anyway): {test_error}")
+        # Don't fail on import errors or other unexpected issues - just warn
+
     logger.info("=" * 80)
     logger.info("✓ ALL METADATA VALIDATIONS PASSED")
     logger.info("=" * 80)
@@ -386,13 +443,13 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
         logger.info(f"Target workspace: {workspace_url}")
 
         # Validate metadata before proceeding
-        current_step = "Step 0/8: Validating metadata and configuration"
+        current_step = "Step 0/9: Validating metadata and configuration"
         await tracker.update(current_step)
         validate_metadata(config["metadata"])
         validate_sharepack_config(config)
 
         # Step 1: Initialize and detect scope
-        current_step = "Step 1/8: Initializing provisioning"
+        current_step = "Step 1/9: Initializing provisioning"
         await tracker.update(current_step)
 
         has_recipients = bool(config.get("recipient"))
@@ -401,7 +458,7 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
 
         # Step 2: Ensure recipients (Databricks only — no DB writes)
         if has_recipients:
-            current_step = "Step 2/8: Creating/updating recipients"
+            current_step = "Step 2/9: Creating/updating recipients"
             await tracker.update(current_step)
             await ensure_recipients(
                 workspace_url=workspace_url,
@@ -412,11 +469,11 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
             )
         else:
             logger.info("No recipients in config - skipping recipient provisioning")
-            await tracker.update("Step 2/8: Skipping recipients (not in config)")
+            await tracker.update("Step 2/9: Skipping recipients (not in config)")
 
         # Step 3: Validate recipient references in shares
         if has_shares:
-            current_step = "Step 3/8: Validating recipient references"
+            current_step = "Step 3/9: Validating recipient references"
             await tracker.update(current_step)
             logger.info("Validating that all recipients referenced in shares exist...")
 
@@ -467,11 +524,11 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
 
             logger.success("All recipient references validated successfully")
         else:
-            await tracker.update("Step 3/8: Skipping recipient validation (no shares)")
+            await tracker.update("Step 3/9: Skipping recipient validation (no shares)")
 
         # Step 4: Create/update shares (Databricks only — no DB writes)
         if has_shares:
-            current_step = "Step 4/8: Creating/updating shares"
+            current_step = "Step 4/9: Creating/updating shares"
             await tracker.update(current_step)
             await ensure_shares(
                 workspace_url=workspace_url,
@@ -482,11 +539,11 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
             )
         else:
             logger.info("No shares in config - skipping share provisioning")
-            await tracker.update("Step 4/8: Skipping shares (not in config)")
+            await tracker.update("Step 4/9: Skipping shares (not in config)")
 
         # Step 5/6: Ensure pipelines and schedules (Databricks only — no DB writes)
         if has_shares:
-            current_step = "Step 5/8: Creating/updating DLT pipelines and schedules"
+            current_step = "Step 5/9: Creating/updating DLT pipelines and schedules"
             await tracker.update(current_step)
             await ensure_pipelines(
                 workspace_url=workspace_url,
@@ -496,10 +553,10 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
                 created_resources=created_resources,
             )
         else:
-            await tracker.update("Step 5/8: Skipping pipelines (no shares in config)")
+            await tracker.update("Step 5/9: Skipping pipelines (no shares in config)")
 
         # Step 6: ALL Databricks ops succeeded → persist to DB
-        current_step = "Step 6/8: Persisting to database"
+        current_step = "Step 6/9: Persisting to database"
         await tracker.update(current_step)
 
         configurator = config["metadata"]["configurator"]
@@ -513,15 +570,59 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
                 pipeline_db_entries, share_pack_id, share_name_to_id, share_repo, pipeline_repo
             )
 
-        # Step 7: Mark as completed
-        await tracker.complete()
+        # Step 7: Clean up orphaned pipelines (whose assets were removed from shares)
+        # NOTE: Cleanup only makes sense for UPDATE strategy where assets might be removed.
+        # For NEW strategy, everything is brand new - there can't be orphaned pipelines.
+        logger.info("Skipping pipeline cleanup for NEW strategy (no assets removed)")
+        await tracker.update("Step 7/9: Skipping pipeline cleanup (NEW strategy - not applicable)")
 
-        logger.success(f"Share pack {share_pack_id} provisioned successfully")
-        logger.info(
-            f"Created {len(created_resources['recipients'])} recipients, "
-            f"{len(created_resources['shares'])} shares, "
-            f"{len(created_resources['pipelines'])} pipelines"
-        )
+        # Step 8: Determine if any changes were made
+        # Check if all db_entries have action='unchanged' (no changes)
+        all_unchanged = True
+        total_created = 0
+        total_updated = 0
+
+        for entry in recipient_db_entries:
+            action = entry.get("action", "")
+            if action == "created":
+                total_created += 1
+                all_unchanged = False
+            elif action == "updated":
+                total_updated += 1
+                all_unchanged = False
+
+        for entry in share_db_entries:
+            action = entry.get("action", "")
+            if action == "created":
+                total_created += 1
+                all_unchanged = False
+            elif action == "updated":
+                total_updated += 1
+                all_unchanged = False
+
+        for entry in pipeline_db_entries:
+            action = entry.get("action", "")
+            if action == "created":
+                total_created += 1
+                all_unchanged = False
+            elif action == "updated":
+                total_updated += 1
+                all_unchanged = False
+
+        # Step 9: Mark as completed with appropriate message
+        if all_unchanged:
+            completion_message = "Already up to date with share pack data"
+            logger.info(f"Share pack {share_pack_id} is already up to date - no changes needed")
+        else:
+            completion_message = f"All steps completed successfully ({total_created} created, {total_updated} updated)"
+            logger.success(f"Share pack {share_pack_id} provisioned successfully")
+            logger.info(
+                f"Created {len(created_resources['recipients'])} recipients, "
+                f"{len(created_resources['shares'])} shares, "
+                f"{len(created_resources['pipelines'])} pipelines"
+            )
+
+        await tracker.complete(completion_message)
 
     except Exception as e:
         await tracker.fail(str(e), current_step or "Provisioning failed")

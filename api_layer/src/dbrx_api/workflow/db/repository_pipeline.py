@@ -17,6 +17,36 @@ import asyncpg
 from dbrx_api.workflow.db.repository_base import BaseRepository
 
 
+def _normalize_json_data(data: Any) -> Any:
+    """
+    Normalize data for consistent JSON serialization.
+
+    - Sorts lists to prevent order-based false positives
+    - Sorts dict keys (json.dumps does this with sort_keys=True)
+    - Removes duplicates from lists
+
+    Args:
+        data: Data to normalize (list, dict, or other)
+
+    Returns:
+        Normalized data
+    """
+    if isinstance(data, list):
+        # Sort and deduplicate list (preserve strings, numbers, etc.)
+        try:
+            # Remove duplicates while preserving order, then sort
+            unique_items = list(dict.fromkeys(data))
+            return sorted(unique_items)
+        except TypeError:
+            # If items aren't comparable (mixed types), just deduplicate
+            return list(dict.fromkeys(data))
+    elif isinstance(data, dict):
+        # Recursively normalize nested structures
+        return {k: _normalize_json_data(v) for k, v in data.items()}
+    else:
+        return data
+
+
 class PipelineRepository(BaseRepository):
     """Pipeline repository with domain-specific queries."""
 
@@ -65,8 +95,8 @@ class PipelineRepository(BaseRepository):
             "cron_expression": cron_expression,
             "cron_timezone": timezone,
             "serverless": serverless,
-            "tags": json.dumps(tags or {}),
-            "notification_list": json.dumps(notification_emails or []),
+            "tags": json.dumps(_normalize_json_data(tags or {})),
+            "notification_list": json.dumps(_normalize_json_data(notification_emails or [])),
             "is_deleted": False,
             "request_source": "share_pack",
         }
@@ -126,8 +156,8 @@ class PipelineRepository(BaseRepository):
             "cron_expression": cron_expression,
             "cron_timezone": timezone,
             "serverless": serverless,
-            "tags": json.dumps(tags or {}),
-            "notification_list": json.dumps(notification_emails or []),
+            "tags": json.dumps(_normalize_json_data(tags or {})),
+            "notification_list": json.dumps(_normalize_json_data(notification_emails or [])),
             "is_deleted": False,
             "request_source": "share_pack",
         }
@@ -210,8 +240,8 @@ class PipelineRepository(BaseRepository):
             "cron_expression": cron_expression or existing_cron,
             "cron_timezone": timezone or existing_tz,
             "serverless": serverless,
-            "tags": json.dumps(tags or {}),
-            "notification_list": json.dumps(notification_emails or []),
+            "tags": json.dumps(_normalize_json_data(tags or {})),
+            "notification_list": json.dumps(_normalize_json_data(notification_emails or [])),
             "is_deleted": False,
             "request_source": "api",
         }
@@ -274,5 +304,37 @@ class PipelineRepository(BaseRepository):
                 ORDER BY pipeline_name
                 """,
                 share_pack_id,
+            )
+            return [dict(row) for row in rows]
+
+    async def list_by_databricks_pipeline_id(
+        self,
+        databricks_pipeline_id: str,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all current pipeline records for a Databricks pipeline ID.
+
+        Used to check if multiple database records reference the same
+        Databricks pipeline (shared pipeline scenario).
+
+        Args:
+            databricks_pipeline_id: The Databricks pipeline ID
+            include_deleted: Include soft-deleted records
+
+        Returns:
+            List of pipeline records
+        """
+        async with self.pool.acquire() as conn:
+            deleted_filter = "" if include_deleted else "AND is_deleted = false"
+            rows = await conn.fetch(
+                f"""
+                SELECT * FROM deltashare.{self.table}
+                WHERE databricks_pipeline_id = $1
+                  AND is_current = true
+                  {deleted_filter}
+                ORDER BY pipeline_name
+                """,
+                databricks_pipeline_id,
             )
             return [dict(row) for row in rows]

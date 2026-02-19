@@ -10,6 +10,7 @@ from typing import Optional
 from loguru import logger
 
 try:
+    from azure.core.exceptions import ResourceExistsError
     from azure.storage.queue import QueueClient
 
     AZURE_QUEUE_AVAILABLE = True
@@ -17,6 +18,7 @@ except ImportError:
     logger.warning("azure-storage-queue not installed - workflow queue will not work")
     AZURE_QUEUE_AVAILABLE = False
     QueueClient = None
+    ResourceExistsError = None
 
 
 class SharePackQueueClient:
@@ -52,8 +54,11 @@ class SharePackQueueClient:
         try:
             self.client.create_queue()
             logger.info(f"Queue '{self.queue_name}' ready")
+        except ResourceExistsError:
+            # Queue already exists - this is expected and OK
+            logger.debug("Queue exists")
         except Exception as e:
-            # Queue might already exist - that's OK
+            # Other error during queue creation
             logger.debug(f"Queue creation message: {e}")
 
     def enqueue_sharepack(self, share_pack_id: str, share_pack_name: str) -> None:

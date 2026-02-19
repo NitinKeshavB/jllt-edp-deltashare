@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 from fastapi import status
+
 from tests.consts import API_BASE
 
 

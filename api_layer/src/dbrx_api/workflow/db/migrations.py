@@ -82,7 +82,7 @@ async def _run_incremental_migrations_impl(conn: asyncpg.Connection) -> None:
                 ADD COLUMN IF NOT EXISTS request_source VARCHAR(50) DEFAULT NULL
                 """
             )
-            logger.debug(f"Ensured request_source on deltashare.{table}")
+            # Suppress verbose output - column additions are routine
         except Exception as col_err:
             logger.warning(f"Column request_source on {table} (may already exist): {col_err}")
 
@@ -94,7 +94,7 @@ async def _run_incremental_migrations_impl(conn: asyncpg.Connection) -> None:
             ADD COLUMN IF NOT EXISTS deployment_marker VARCHAR(50) DEFAULT 'v2026_02_16'
             """
         )
-        logger.info("deployment_marker column added to users table - code is current")
+        # Suppress verbose output - marker is routine
     except Exception as marker_err:
         logger.warning(f"deployment_marker on users (may already exist): {marker_err}")
 
@@ -106,7 +106,7 @@ async def _run_incremental_migrations_impl(conn: asyncpg.Connection) -> None:
             ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''
             """
         )
-        logger.debug("Ensured description column on deltashare.shares")
+        # Suppress verbose output - column addition is routine
     except Exception as desc_err:
         logger.warning(f"Column description on shares (may already exist): {desc_err}")
 
@@ -124,7 +124,7 @@ async def _run_incremental_migrations_impl(conn: asyncpg.Connection) -> None:
                 ALTER COLUMN {col} DROP NOT NULL
                 """
             )
-            logger.debug(f"Allowed NULL {col} on deltashare.{table}")
+            # Suppress verbose output - nullability changes are routine
         except Exception as alt_err:
             logger.warning(f"ALTER {table}.{col} (may already be nullable): {alt_err}")
 

@@ -24,10 +24,28 @@ async def persist_recipients_to_db(
     for entry in db_entries:
         action = entry["action"]
         recipient_name = entry["recipient_name"]
+        recipient_id = entry.get("recipient_id")
+
+        # If recipient_id not in entry, look it up by name
+        if not recipient_id:
+            try:
+                existing = await recipient_repo.list_by_recipient_name(recipient_name)
+                if existing:
+                    recipient_id = existing[0]["recipient_id"]
+            except Exception:
+                pass
+
         try:
+            # Get current version before operation (to detect if versioning occurred)
+            current_before = None
+            current_record_id_before = None
+            if recipient_id:
+                current_before = await recipient_repo.get_current(recipient_id, include_deleted=False)
+                current_record_id_before = current_before.get("record_id") if current_before else None
+
             if action == "created":
                 await recipient_repo.create_from_config(
-                    recipient_id=entry["recipient_id"],
+                    recipient_id=recipient_id,
                     share_pack_id=share_pack_id,
                     recipient_name=recipient_name,
                     databricks_recipient_id=entry["databricks_recipient_id"],
@@ -55,7 +73,30 @@ async def persist_recipients_to_db(
                     created_by="orchestrator",
                     recipient_id=None,
                 )
-            logger.info(f"Persisted recipient '{recipient_name}' to DB ({action})")
+
+            # Check if versioning actually occurred
+            # If we still don't have recipient_id, look it up again after upsert
+            if not recipient_id:
+                try:
+                    existing = await recipient_repo.list_by_recipient_name(recipient_name)
+                    if existing:
+                        recipient_id = existing[0]["recipient_id"]
+                except Exception:
+                    pass
+
+            if recipient_id:
+                current_after = await recipient_repo.get_current(recipient_id, include_deleted=False)
+                current_record_id_after = current_after.get("record_id") if current_after else None
+
+                # Update action based on what actually happened
+                if current_record_id_before is None and current_record_id_after:
+                    entry["action"] = "created"
+                elif current_record_id_before == current_record_id_after:
+                    entry["action"] = "unchanged"
+                else:
+                    entry["action"] = "updated"
+
+            logger.info(f"Persisted recipient '{recipient_name}' to DB " f"({entry.get('action', 'unknown')})")
         except Exception as db_err:
             logger.opt(exception=True).warning(
                 f"Failed to persist recipient '{recipient_name}' ({action}) to DB: {db_err}"
@@ -78,10 +119,28 @@ async def persist_shares_to_db(
     for entry in db_entries:
         action = entry["action"]
         share_name = entry["share_name"]
+        share_id = entry.get("share_id")
+
+        # If share_id not in entry, look it up by name
+        if not share_id:
+            try:
+                existing = await share_repo.list_by_share_name(share_name)
+                if existing:
+                    share_id = existing[0]["share_id"]
+            except Exception:
+                pass
+
         try:
+            # Get current version before operation (to detect if versioning occurred)
+            current_before = None
+            current_record_id_before = None
+            if share_id:
+                current_before = await share_repo.get_current(share_id, include_deleted=False)
+                current_record_id_before = current_before.get("record_id") if current_before else None
+
             if action == "created":
                 returned_id = await share_repo.create_from_config(
-                    share_id=entry["share_id"],
+                    share_id=share_id,
                     share_pack_id=share_pack_id,
                     share_name=share_name,
                     databricks_share_id=entry["databricks_share_id"],
@@ -95,7 +154,6 @@ async def persist_shares_to_db(
                     share_tags=entry.get("share_tags", []),
                     created_by="orchestrator",
                 )
-                share_name_to_id[share_name] = returned_id or entry["share_id"]
             else:
                 returned_id = await share_repo.upsert_from_config(
                     share_pack_id=share_pack_id,
@@ -111,8 +169,41 @@ async def persist_shares_to_db(
                     created_by="orchestrator",
                     share_id=None,
                 )
-                share_name_to_id[share_name] = returned_id
-            logger.info(f"Persisted share '{share_name}' to DB ({action})")
+
+            # CRITICAL: If we don't have share_id yet, look it up NOW before setting mapping
+            # This ensures we ALWAYS use the permanent share_id, never the record_id
+            if not share_id:
+                try:
+                    existing = await share_repo.list_by_share_name(share_name)
+                    if existing:
+                        share_id = existing[0]["share_id"]
+                        logger.debug(f"Looked up permanent share_id for '{share_name}': {share_id}")
+                except Exception:
+                    pass
+
+            # NOW set the mapping with the permanent share_id (or returned_id as last resort)
+            # CRITICAL: Use permanent share_id for foreign key references, NOT record_id
+            final_id = share_id if share_id else returned_id
+            share_name_to_id[share_name] = final_id
+            if share_id != returned_id and returned_id:
+                logger.info(
+                    f"Share '{share_name}': Using permanent share_id={share_id} "
+                    f"(not record_id={returned_id}) for pipeline references"
+                )
+
+            if share_id:
+                current_after = await share_repo.get_current(share_id, include_deleted=False)
+                current_record_id_after = current_after.get("record_id") if current_after else None
+
+                # Update action based on what actually happened
+                if current_record_id_before is None and current_record_id_after:
+                    entry["action"] = "created"
+                elif current_record_id_before == current_record_id_after:
+                    entry["action"] = "unchanged"
+                else:
+                    entry["action"] = "updated"
+
+            logger.info(f"Persisted share '{share_name}' to DB ({entry['action']})")
         except Exception as db_err:
             logger.opt(exception=True).warning(f"Failed to persist share '{share_name}' ({action}) to DB: {db_err}")
 
@@ -130,15 +221,39 @@ async def persist_pipelines_to_db(
     for entry in db_entries:
         action = entry["action"]
         pipeline_name = entry["pipeline_name"]
+        pipeline_id = entry.get("pipeline_id")
         share_name = entry["share_name"]
 
-        # Resolve share_id
+        # If pipeline_id not in entry, look it up by name
+        if not pipeline_id:
+            try:
+                existing = await pipeline_repo.list_by_pipeline_name(pipeline_name)
+                if existing:
+                    pipeline_id = existing[0]["pipeline_id"]
+            except Exception:
+                pass
+
+        # Resolve share_id - CRITICAL: Always use the most recent current share_id
         share_id = share_name_to_id.get(share_name)
         if not share_id:
+            # Fallback: Query database for current share
+            # First try: shares in this share pack
             try:
-                all_share_records = await share_repo.list_by_share_name(share_name)
-                if all_share_records:
-                    share_id = all_share_records[0]["share_id"]
+                share_pack_shares = await share_repo.list_by_share_pack(share_pack_id)
+                match = next((s for s in share_pack_shares if s["share_name"] == share_name), None)
+                if match:
+                    share_id = match["share_id"]
+                else:
+                    # Second try: shares across all share packs
+                    all_share_records = await share_repo.list_by_share_name(share_name)
+                    # Prefer share from same share_pack if multiple exist
+                    for record in all_share_records:
+                        if record.get("share_pack_id") == share_pack_id:
+                            share_id = record["share_id"]
+                            break
+                    # If no match in same share_pack, use first current share
+                    if not share_id and all_share_records:
+                        share_id = all_share_records[0]["share_id"]
             except Exception:
                 pass
 
@@ -148,10 +263,29 @@ async def persist_pipelines_to_db(
             )
             continue
 
+        # CRITICAL: Check if pipeline's share_id needs updating (stale reference)
+        if pipeline_id:
+            current_pipeline = await pipeline_repo.get_current(pipeline_id, include_deleted=False)
+            if current_pipeline:
+                old_share_id = current_pipeline.get("share_id")
+                if old_share_id != share_id:
+                    logger.warning(
+                        f"Pipeline '{pipeline_name}' has STALE share_id: " f"{old_share_id} → {share_id}. Will update."
+                    )
+                    # Force action to 'updated' to ensure upsert updates share_id
+                    entry["action"] = "updated"
+
         try:
+            # Get current version before operation (to detect if versioning occurred)
+            current_before = None
+            current_record_id_before = None
+            if pipeline_id:
+                current_before = await pipeline_repo.get_current(pipeline_id, include_deleted=False)
+                current_record_id_before = current_before.get("record_id") if current_before else None
+
             if action == "created":
                 await pipeline_repo.create_from_config(
-                    pipeline_id=entry["pipeline_id"],
+                    pipeline_id=pipeline_id,
                     share_id=share_id,
                     share_pack_id=share_pack_id,
                     pipeline_name=pipeline_name,
@@ -188,8 +322,31 @@ async def persist_pipelines_to_db(
                     notification_emails=entry.get("notification_emails", []),
                     created_by="orchestrator",
                 )
-            logger.info(f"Persisted pipeline '{pipeline_name}' to DB ({action})")
+
+            # Check if versioning actually occurred
+            # If we still don't have pipeline_id, look it up again after upsert
+            if not pipeline_id:
+                try:
+                    existing = await pipeline_repo.list_by_pipeline_name(pipeline_name)
+                    if existing:
+                        pipeline_id = existing[0]["pipeline_id"]
+                except Exception:
+                    pass
+
+            if pipeline_id:
+                current_after = await pipeline_repo.get_current(pipeline_id, include_deleted=False)
+                current_record_id_after = current_after.get("record_id") if current_after else None
+
+                # Update action based on what actually happened
+                if current_record_id_before is None and current_record_id_after:
+                    entry["action"] = "created"
+                elif current_record_id_before == current_record_id_after:
+                    entry["action"] = "unchanged"
+                else:
+                    entry["action"] = "updated"
+
+            logger.info(f"Persisted pipeline '{pipeline_name}' to DB ({entry['action']})")
         except Exception as db_err:
             logger.opt(exception=True).warning(
-                f"Failed to persist pipeline '{pipeline_name}' ({action}) to DB: {db_err}"
+                f"Failed to persist pipeline '{pipeline_name}' ({action}) " f"to DB: {db_err}"
             )

@@ -10,10 +10,113 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 from uuid import UUID
 
 import asyncpg
 from loguru import logger
+
+
+def _compare_fields(
+    current_row: Optional[Dict[str, Any]],
+    new_fields: Dict[str, Any],
+    exclude_fields: Optional[Set[str]] = None,
+) -> bool:
+    """
+    Compare current row with new fields to detect if anything changed.
+
+    Args:
+        current_row: Current database row (or None if entity doesn't exist)
+        new_fields: New field values being proposed
+        exclude_fields: Fields to exclude from comparison (e.g., audit fields)
+
+    Returns:
+        True if data has changed, False if identical
+    """
+    if not current_row:
+        # No current row exists, so this is a new record (changed)
+        return True
+
+    # Default exclusions: SCD2 metadata and audit fields
+    if exclude_fields is None:
+        exclude_fields = {
+            "record_id",
+            "effective_from",
+            "effective_to",
+            "is_current",
+            "version",
+            "created_by",
+            "change_reason",
+            "created_at",
+            "updated_at",
+        }
+
+    # Compare each field in new_fields with current row
+    for field_name, new_value in new_fields.items():
+        if field_name in exclude_fields:
+            continue
+
+        current_value = current_row.get(field_name)
+
+        # Normalize values for comparison
+        # Convert None to empty string for text fields, empty list for arrays
+        if new_value is None and current_value is None:
+            continue
+
+        # Handle JSON fields (convert to comparable format)
+        import json
+
+        # Check if either value is JSON (dict, list, or JSON string)
+        is_json_field = False
+        new_parsed = None
+        current_parsed = None
+
+        # Try to detect and parse JSON values
+        if isinstance(new_value, (list, dict)):
+            # New value is already a dict/list
+            new_parsed = new_value
+            is_json_field = True
+        elif isinstance(new_value, str):
+            # New value might be a JSON string - try to parse it
+            try:
+                new_parsed = json.loads(new_value)
+                is_json_field = True
+            except (json.JSONDecodeError, TypeError, ValueError):
+                # Not JSON, treat as regular string
+                pass
+
+        if is_json_field:
+            # Parse current value as well
+            if isinstance(current_value, (list, dict)):
+                current_parsed = current_value
+            elif isinstance(current_value, str):
+                try:
+                    current_parsed = json.loads(current_value)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    # Current value is not valid JSON, treat as mismatch
+                    logger.debug(f"Field '{field_name}' changed: {current_value} → {new_value}")
+                    return True
+            elif current_value is None:
+                # Compare None with parsed JSON value
+                current_parsed = None
+            else:
+                current_parsed = current_value
+
+            # Compare parsed JSON objects using normalized strings
+            new_normalized = json.dumps(new_parsed, sort_keys=True)
+            current_normalized = json.dumps(current_parsed, sort_keys=True)
+
+            if new_normalized != current_normalized:
+                logger.debug(f"Field '{field_name}' changed: {current_normalized} → {new_normalized}")
+                return True
+        else:
+            # Simple value comparison (non-JSON fields)
+            if new_value != current_value:
+                logger.debug(f"Field '{field_name}' changed: {current_value} → {new_value}")
+                return True
+
+    # No changes detected
+    return False
 
 
 async def expire_and_insert_scd2(
@@ -24,9 +127,10 @@ async def expire_and_insert_scd2(
     new_fields: Dict[str, Any],
     created_by: str,
     change_reason: str,
+    skip_if_unchanged: bool = True,
 ) -> UUID:
     """
-    Generic SCD2 expire-and-insert operation.
+    Generic SCD2 expire-and-insert operation with change detection.
 
     Expires the current version of an entity (sets effective_to=NOW, is_current=false)
     and inserts a new version with incremented version number.
@@ -39,13 +143,25 @@ async def expire_and_insert_scd2(
         new_fields: Dict of fields to set in new version (excluding SCD2 columns)
         created_by: Who/what is creating this version
         change_reason: Why this version is being created
+        skip_if_unchanged: If True, don't create new version if data hasn't changed (default: True)
 
     Returns:
-        record_id (UUID) of the newly inserted version
+        record_id (UUID) of the newly inserted version (or existing version if unchanged)
 
     Raises:
         Exception: If database operations fail
     """
+    # 0. Check if data has changed (if skip_if_unchanged=True)
+    if skip_if_unchanged:
+        current_row = await get_current_version(conn, table, entity_id_column, entity_id, include_deleted=False)
+        if current_row and not _compare_fields(current_row, new_fields):
+            # No changes detected - return existing record_id without versioning
+            logger.debug(
+                f"Skipping SCD2 version for {table}.{entity_id_column}={entity_id}: no changes detected "
+                f"(current version={current_row.get('version')})"
+            )
+            return current_row["record_id"]
+
     # 1. Expire current row (if exists)
     old_row = await conn.fetchrow(
         f"""

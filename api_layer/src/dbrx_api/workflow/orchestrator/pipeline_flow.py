@@ -14,6 +14,8 @@ from typing import Optional
 from typing import Tuple
 from uuid import uuid4
 
+from loguru import logger
+
 from dbrx_api.jobs.dbrx_pipelines import create_pipeline
 from dbrx_api.jobs.dbrx_pipelines import delete_pipeline
 from dbrx_api.jobs.dbrx_pipelines import get_pipeline_by_name
@@ -24,7 +26,6 @@ from dbrx_api.jobs.dbrx_schedule import delete_schedule_for_pipeline
 from dbrx_api.jobs.dbrx_schedule import list_schedules
 from dbrx_api.jobs.dbrx_schedule import update_schedule_for_pipeline
 from dbrx_api.jobs.dbrx_schedule import update_timezone_for_schedule
-from loguru import logger
 
 
 def _resolve_source_asset(pipeline_config: Dict[str, Any], pipeline_name: str) -> str:

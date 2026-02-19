@@ -13,6 +13,8 @@ from typing import Optional
 from typing import Tuple
 from uuid import uuid4
 
+from loguru import logger
+
 from dbrx_api.dltshr.share import add_data_object_to_share
 from dbrx_api.dltshr.share import add_recipients_to_share
 from dbrx_api.dltshr.share import create_share
@@ -23,7 +25,6 @@ from dbrx_api.dltshr.share import get_shares
 from dbrx_api.dltshr.share import remove_recipients_from_share
 from dbrx_api.dltshr.share import revoke_data_object_from_share
 from dbrx_api.dltshr.share import update_share_description
-from loguru import logger
 
 
 def _assets_to_objects_dict(share_assets: List[str]) -> Dict[str, List[str]]:
@@ -114,8 +115,87 @@ async def ensure_shares(
 
     for share_config in shares_config:
         share_name = share_config["name"]
-        share_assets = share_config.get("share_assets", [])
-        desired_recipients = list(share_config.get("recipients", []))
+
+        # Share Asset management - support both declarative and explicit approaches
+        # Approach 1 (Declarative): Use 'share_assets' field as complete desired state
+        # Approach 2 (Explicit): Use 'share_assets_to_add' and 'share_assets_to_remove' for incremental changes
+        share_assets_declarative = share_config.get("share_assets", [])
+        share_assets_to_add_explicit = share_config.get("share_assets_to_add", [])
+        share_assets_to_remove_explicit = share_config.get("share_assets_to_remove", [])
+
+        # Determine which approach is being used for share assets
+        if share_assets_declarative:
+            # Declarative approach: use provided list as complete desired state
+            desired_share_assets = list(share_assets_declarative)
+            logger.debug(
+                f"Share {share_name}: Using declarative share_assets (complete state): {desired_share_assets}"
+            )
+        elif share_assets_to_add_explicit or share_assets_to_remove_explicit:
+            # Explicit approach: compute based on current + add - remove
+            # For NEW strategy on non-existent share, current = empty set
+            current_assets_list = []
+            existing_check = get_shares(share_name=share_name, dltshr_workspace_url=workspace_url)
+            if existing_check:
+                current_objects = get_share_objects(share_name=share_name, dltshr_workspace_url=workspace_url)
+                current_assets_list = (
+                    current_objects.get("tables", [])
+                    + current_objects.get("views", [])
+                    + current_objects.get("schemas", [])
+                )
+
+            current_set = set(current_assets_list)
+            to_add_set = set(share_assets_to_add_explicit)
+            to_remove_set = set(share_assets_to_remove_explicit)
+
+            desired_share_assets = list((current_set | to_add_set) - to_remove_set)
+            logger.debug(
+                f"Share {share_name}: Using explicit share_assets. "
+                f"Current={current_set}, Add={to_add_set}, Remove={to_remove_set}, "
+                f"Desired={desired_share_assets}"
+            )
+        else:
+            # No share asset management specified - keep existing or create with none
+            desired_share_assets = []
+            logger.debug(f"Share {share_name}: No share_assets specified, using empty list")
+
+        # Recipient management - support both declarative and explicit approaches
+        # Approach 1 (Declarative): Use 'recipients' field as complete desired state
+        # Approach 2 (Explicit): Use 'recipients_to_add' and 'recipients_to_remove' for incremental changes
+        recipients_declarative = share_config.get("recipients", [])
+        recipients_to_add_explicit = share_config.get("recipients_to_add", [])
+        recipients_to_remove_explicit = share_config.get("recipients_to_remove", [])
+
+        # Determine which approach is being used and compute desired recipients
+        if recipients_declarative:
+            # Declarative approach: use provided list as complete desired state
+            desired_recipients = list(recipients_declarative)
+            logger.debug(f"Share {share_name}: Using declarative recipients (complete state): {desired_recipients}")
+        elif recipients_to_add_explicit or recipients_to_remove_explicit:
+            # Explicit approach: compute based on current + add - remove
+            # For NEW strategy on non-existent share, current = empty set
+            current_recipients_list = []
+            existing_check = get_shares(share_name=share_name, dltshr_workspace_url=workspace_url)
+            if existing_check:
+                current_recipients_obj = get_share_recipients(
+                    share_name=share_name, dltshr_workspace_url=workspace_url
+                )
+                current_recipients_list = current_recipients_obj if isinstance(current_recipients_obj, list) else []
+
+            current_set = set(current_recipients_list)
+            to_add_set = set(recipients_to_add_explicit)
+            to_remove_set = set(recipients_to_remove_explicit)
+
+            desired_recipients = list((current_set | to_add_set) - to_remove_set)
+            logger.debug(
+                f"Share {share_name}: Using explicit recipients. "
+                f"Current={current_set}, Add={to_add_set}, Remove={to_remove_set}, "
+                f"Desired={desired_recipients}"
+            )
+        else:
+            # No recipient management specified - keep existing or create with none
+            desired_recipients = []
+            logger.debug(f"Share {share_name}: No recipients specified, using empty list")
+
         delta_share_meta = share_config.get("delta_share") or {}
         ext_catalog_name = delta_share_meta.get("ext_catalog_name") or ""
         ext_schema_name = delta_share_meta.get("ext_schema_name") or ""
@@ -148,7 +228,7 @@ async def ensure_shares(
                 created_resources["shares"].append(share_name)
                 logger.success(f"Created share: {share_name}")
 
-                objects_dict = _assets_to_objects_dict(share_assets)
+                objects_dict = _assets_to_objects_dict(desired_share_assets)
                 if objects_dict.get("tables") or objects_dict.get("schemas"):
                     add_result = add_data_object_to_share(
                         dltshr_workspace_url=workspace_url,
@@ -177,7 +257,7 @@ async def ensure_shares(
                         "databricks_share_id": result.name if hasattr(result, "name") else share_name,
                         "description": desc,
                         "storage_root": "",
-                        "share_assets": share_assets,
+                        "share_assets": desired_share_assets,
                         "recipients_attached": desired_recipients,
                         "ext_catalog_name": ext_catalog_name,
                         "ext_schema_name": ext_schema_name,
@@ -191,7 +271,7 @@ async def ensure_shares(
         current_objects = get_share_objects(share_name=share_name, dltshr_workspace_url=workspace_url)
         current_recipients = get_share_recipients(share_name=share_name, dltshr_workspace_url=workspace_url)
 
-        desired_objects = _assets_to_objects_dict(share_assets)
+        desired_objects = _assets_to_objects_dict(desired_share_assets)
         current_tables = set(current_objects.get("tables", []))
         current_views = set(current_objects.get("views", []))
         current_schemas = set(current_objects.get("schemas", []))
@@ -251,7 +331,7 @@ async def ensure_shares(
                     "databricks_share_id": share_name,
                     "description": desc,
                     "storage_root": "",
-                    "share_assets": share_assets,
+                    "share_assets": desired_share_assets,
                     "recipients_attached": desired_recipients,
                     "ext_catalog_name": ext_catalog_name,
                     "ext_schema_name": ext_schema_name,

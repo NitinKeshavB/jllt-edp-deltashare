@@ -18,6 +18,8 @@ from typing import List
 from typing import Tuple
 from uuid import UUID
 
+from loguru import logger
+
 from dbrx_api.dltshr.recipient import delete_recipient
 from dbrx_api.dltshr.recipient import get_recipients
 from dbrx_api.dltshr.share import delete_share
@@ -29,7 +31,6 @@ from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
 from dbrx_api.workflow.db.repository_recipient import RecipientRepository
 from dbrx_api.workflow.db.repository_share import ShareRepository
 from dbrx_api.workflow.orchestrator.status_tracker import StatusTracker
-from loguru import logger
 
 
 def _recipient_names_from_config(config: Dict[str, Any]) -> List[str]:

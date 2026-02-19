@@ -17,6 +17,36 @@ import asyncpg
 from dbrx_api.workflow.db.repository_base import BaseRepository
 
 
+def _normalize_json_data(data: Any) -> Any:
+    """
+    Normalize data for consistent JSON serialization.
+
+    - Sorts lists to prevent order-based false positives
+    - Sorts dict keys (json.dumps does this with sort_keys=True)
+    - Removes duplicates from lists
+
+    Args:
+        data: Data to normalize (list, dict, or other)
+
+    Returns:
+        Normalized data
+    """
+    if isinstance(data, list):
+        # Sort and deduplicate list (preserve strings, numbers, etc.)
+        try:
+            # Remove duplicates while preserving order, then sort
+            unique_items = list(dict.fromkeys(data))
+            return sorted(unique_items)
+        except TypeError:
+            # If items aren't comparable (mixed types), just deduplicate
+            return list(dict.fromkeys(data))
+    elif isinstance(data, dict):
+        # Recursively normalize nested structures
+        return {k: _normalize_json_data(v) for k, v in data.items()}
+    else:
+        return data
+
+
 class ShareRepository(BaseRepository):
     """Share repository with domain-specific queries."""
 
@@ -52,12 +82,12 @@ class ShareRepository(BaseRepository):
             "share_name": share_name,
             "databricks_share_id": databricks_share_id,
             "description": description or "",
-            "share_assets": json.dumps(share_assets or []),
-            "recipients": json.dumps(recipients_attached or []),
+            "share_assets": json.dumps(_normalize_json_data(share_assets or [])),
+            "recipients": json.dumps(_normalize_json_data(recipients_attached or [])),
             "ext_catalog_name": ext_catalog_name or "",
             "ext_schema_name": ext_schema_name or "",
             "prefix_assetname": prefix_assetname or "",
-            "share_tags": json.dumps(share_tags or []),
+            "share_tags": json.dumps(_normalize_json_data(share_tags or [])),
             "is_deleted": False,
             "request_source": "share_pack",
         }
@@ -105,12 +135,12 @@ class ShareRepository(BaseRepository):
             "share_name": share_name,
             "databricks_share_id": databricks_share_id,
             "description": description or "",
-            "share_assets": json.dumps(share_assets or []),
-            "recipients": json.dumps(recipients_attached or []),
+            "share_assets": json.dumps(_normalize_json_data(share_assets or [])),
+            "recipients": json.dumps(_normalize_json_data(recipients_attached or [])),
             "ext_catalog_name": ext_catalog_name or "",
             "ext_schema_name": ext_schema_name or "",
             "prefix_assetname": prefix_assetname or "",
-            "share_tags": json.dumps(share_tags or []),
+            "share_tags": json.dumps(_normalize_json_data(share_tags or [])),
             "is_deleted": False,
             "request_source": "share_pack",
         }
@@ -170,8 +200,8 @@ class ShareRepository(BaseRepository):
             "share_pack_id": existing_share_pack_id,
             "share_name": share_name,
             "databricks_share_id": databricks_share_id,
-            "share_assets": json.dumps(share_assets or []),
-            "recipients": json.dumps(recipients_attached or []),
+            "share_assets": json.dumps(_normalize_json_data(share_assets or [])),
+            "recipients": json.dumps(_normalize_json_data(recipients_attached or [])),
             "description": description or "",
             "ext_catalog_name": existing_ext_catalog,
             "ext_schema_name": existing_ext_schema,
@@ -195,5 +225,21 @@ class ShareRepository(BaseRepository):
                 ORDER BY share_name
                 """,
                 share_pack_id,
+            )
+            return [dict(row) for row in rows]
+
+    async def list_all(
+        self,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Get all current shares across all share packs."""
+        async with self.pool.acquire() as conn:
+            deleted_filter = "" if include_deleted else "AND is_deleted = false"
+            rows = await conn.fetch(
+                f"""
+                SELECT * FROM deltashare.{self.table}
+                WHERE is_current = true {deleted_filter}
+                ORDER BY share_name
+                """
             )
             return [dict(row) for row in rows]

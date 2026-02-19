@@ -13,6 +13,8 @@ from typing import Optional
 from typing import Tuple
 from uuid import uuid4
 
+from loguru import logger
+
 from dbrx_api.dltshr.recipient import add_recipient_ip
 from dbrx_api.dltshr.recipient import create_recipient_d2d
 from dbrx_api.dltshr.recipient import create_recipient_d2o
@@ -22,7 +24,6 @@ from dbrx_api.dltshr.recipient import revoke_recipient_ip
 from dbrx_api.dltshr.recipient import rotate_recipient_token
 from dbrx_api.dltshr.recipient import update_recipient_description
 from dbrx_api.dltshr.recipient import update_recipient_expiration_time
-from loguru import logger
 
 
 def _ips_add_and_remove_from_config(
@@ -236,6 +237,36 @@ async def ensure_recipients(
         existing = get_recipients(recipient_name, workspace_url)
 
         if existing:
+            # Recipient exists: validate immutable fields first
+            if recipient_type == "D2D":
+                # Validate that recipient_databricks_org hasn't changed (immutable field)
+                current_org = getattr(existing, "data_recipient_global_metastore_id", None)
+                new_org = recip_config.get("recipient_databricks_org") or recip_config.get(
+                    "data_recipient_global_metastore_id"
+                )
+                # Only raise error if both values exist AND they differ (case-insensitive comparison)
+                if new_org and current_org:
+                    current_normalized = current_org.strip().lower()
+                    new_normalized = new_org.strip().lower()
+                    if current_normalized != new_normalized:
+                        raise ValueError(
+                            f"Cannot update 'recipient_databricks_org' for existing D2D recipient '{recipient_name}'.\n"
+                            f"  Current value: {current_org}\n"
+                            f"  Attempted new value: {new_org}\n\n"
+                            f"The 'recipient_databricks_org' (data_recipient_global_metastore_id) is an IMMUTABLE field "
+                            f"set during recipient creation and cannot be changed.\n\n"
+                            f"To change the target organization:\n"
+                            f"  1. Delete the existing recipient: '{recipient_name}'\n"
+                            f"  2. Create a new recipient with the desired organization\n\n"
+                            f"For D2D recipients, you can only update: description"
+                        )
+                    else:
+                        # Values match - log that we're ignoring it (no update needed)
+                        logger.debug(
+                            f"Ignoring recipient_databricks_org for '{recipient_name}': "
+                            f"value matches existing ({current_org})"
+                        )
+
             # Recipient exists: compare and update if needed
             current_comment = (
                 (existing.comment or "").strip() if hasattr(existing, "comment") and existing.comment else ""
@@ -266,15 +297,17 @@ async def ensure_recipients(
                 current_desc = (
                     (existing.comment or "").strip() if hasattr(existing, "comment") and existing.comment else ""
                 )
+                # Use actual value from Databricks for recipient_databricks_org (immutable field)
+                current_org = (
+                    getattr(existing, "data_recipient_global_metastore_id", None) if recipient_type == "D2D" else None
+                )
                 db_entries.append(
                     {
                         "action": "matching",
                         "recipient_name": recipient_name,
                         "databricks_recipient_id": recipient_name,
                         "recipient_type": recipient_type,
-                        "recipient_databricks_org": recip_config.get("recipient_databricks_org")
-                        if recipient_type == "D2D"
-                        else None,
+                        "recipient_databricks_org": current_org,
                         "ip_access_list": current_ips_list if recipient_type == "D2O" else [],
                         "token_expiry_days": recip_config.get("token_expiry", 0),
                         "token_rotation_enabled": recip_config.get("token_rotation", False),
@@ -306,15 +339,17 @@ async def ensure_recipients(
             if existing.ip_access_list and getattr(existing.ip_access_list, "allowed_ip_addresses", None):
                 current_ips = set(existing.ip_access_list.allowed_ip_addresses)
             effective_ips = _effective_ips_after_changes(recip_config, current_ips) if recipient_type == "D2O" else []
+            # Use actual value from Databricks for recipient_databricks_org (immutable field)
+            current_org = (
+                getattr(existing, "data_recipient_global_metastore_id", None) if recipient_type == "D2D" else None
+            )
             db_entries.append(
                 {
                     "action": "updated",
                     "recipient_name": recipient_name,
                     "databricks_recipient_id": recipient_name,
                     "recipient_type": recipient_type,
-                    "recipient_databricks_org": recip_config.get("recipient_databricks_org")
-                    if recipient_type == "D2D"
-                    else None,
+                    "recipient_databricks_org": current_org,
                     "ip_access_list": list(effective_ips) if recipient_type == "D2O" else [],
                     "token_expiry_days": recip_config.get("token_expiry", 0),
                     "token_rotation_enabled": recip_config.get("token_rotation", False),
