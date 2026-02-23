@@ -40,6 +40,64 @@ def _assets_to_objects_dict(share_assets: List[str]) -> Dict[str, List[str]]:
     return {"tables": tables, "views": [], "schemas": schemas}
 
 
+def _safe_rollback_op(fn: Any, success_msg: str, warn_ok: str = "") -> None:
+    """Call fn(), check for error strings, log result. Never raises."""
+    try:
+        result = fn()
+        if isinstance(result, str) and (not warn_ok or warn_ok.lower() not in result.lower()):
+            logger.warning(f"Rollback warning: {result}")
+        else:
+            logger.info(success_msg)
+    except Exception as exc:
+        logger.error(f"Rollback error: {exc}")
+
+
+def _has_objects(obj_dict: Dict[str, List[str]]) -> bool:
+    return bool(obj_dict and (obj_dict.get("tables") or obj_dict.get("views") or obj_dict.get("schemas")))
+
+
+def _rollback_share_update(
+    share_name: str,
+    objs_added: Dict[str, List[str]],
+    objs_removed: Dict[str, List[str]],
+    rec_added: List[str],
+    rec_removed: List[str],
+    workspace_url: str,
+) -> None:
+    """Undo a single share update. Each operation is independent of the others."""
+    if _has_objects(objs_added):
+        _safe_rollback_op(
+            lambda: revoke_data_object_from_share(
+                dltshr_workspace_url=workspace_url, share_name=share_name, objects_to_revoke=objs_added
+            ),
+            f"Rollback: revoked added objects from share '{share_name}'",
+        )
+    if _has_objects(objs_removed):
+        _safe_rollback_op(
+            lambda: add_data_object_to_share(
+                dltshr_workspace_url=workspace_url, share_name=share_name, objects_to_add=objs_removed
+            ),
+            f"Rollback: re-added removed objects to share '{share_name}'",
+            warn_ok="already",
+        )
+    for rec in rec_added or []:
+        _safe_rollback_op(
+            lambda r=rec: remove_recipients_from_share(
+                dltshr_workspace_url=workspace_url, share_name=share_name, recipient_name=r
+            ),
+            f"Rollback: removed recipient '{rec}' from share '{share_name}'",
+            warn_ok="not found",
+        )
+    for rec in rec_removed or []:
+        _safe_rollback_op(
+            lambda r=rec: add_recipients_to_share(
+                dltshr_workspace_url=workspace_url, share_name=share_name, recipient_name=r
+            ),
+            f"Rollback: re-added recipient '{rec}' to share '{share_name}'",
+            warn_ok="already",
+        )
+
+
 def _rollback_shares(
     rollback_list: List[Tuple[str, ...]],
     workspace_url: str,
@@ -55,44 +113,14 @@ def _rollback_shares(
             except Exception as e:
                 logger.error(f"Rollback: failed to delete share {share_name}: {e}")
         elif action == "updated":
-            _objs_added = item[2]
-            _objs_removed = item[3]
-            _rec_added = item[4]
-            _rec_removed = item[5]
-            try:
-                if _objs_added and (
-                    _objs_added.get("tables") or _objs_added.get("views") or _objs_added.get("schemas")
-                ):
-                    revoke_data_object_from_share(
-                        dltshr_workspace_url=workspace_url,
-                        share_name=share_name,
-                        objects_to_revoke=_objs_added,
-                    )
-                    logger.info(f"Rollback: revoked added objects from share {share_name}")
-                if _objs_removed and (
-                    _objs_removed.get("tables") or _objs_removed.get("views") or _objs_removed.get("schemas")
-                ):
-                    add_data_object_to_share(
-                        dltshr_workspace_url=workspace_url,
-                        share_name=share_name,
-                        objects_to_add=_objs_removed,
-                    )
-                    logger.info(f"Rollback: re-added removed objects to share {share_name}")
-                for rec in _rec_added or []:
-                    remove_recipients_from_share(
-                        dltshr_workspace_url=workspace_url,
-                        share_name=share_name,
-                        recipient_name=rec,
-                    )
-                for rec in _rec_removed or []:
-                    add_recipients_to_share(
-                        dltshr_workspace_url=workspace_url,
-                        share_name=share_name,
-                        recipient_name=rec,
-                    )
-                logger.info(f"Rollback: restored share {share_name} recipients and objects")
-            except Exception as e:
-                logger.error(f"Rollback: failed to restore share {share_name}: {e}")
+            _rollback_share_update(
+                share_name=share_name,
+                objs_added=item[2],
+                objs_removed=item[3],
+                rec_added=item[4],
+                rec_removed=item[5],
+                workspace_url=workspace_url,
+            )
 
 
 async def ensure_shares(
@@ -101,6 +129,8 @@ async def ensure_shares(
     rollback_list: List[Tuple[str, ...]],
     db_entries: List[Dict[str, Any]],
     created_resources: Optional[Dict[str, List]] = None,
+    removed_assets_per_share: Optional[List[Dict[str, Any]]] = None,
+    added_assets_per_share: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     """
     Ensure all shares exist with desired objects and recipients (strategy-agnostic).
@@ -265,6 +295,16 @@ async def ensure_shares(
                         "share_tags": share_tags,
                     }
                 )
+                # All assets on a newly created share are "added" — track for pipeline check
+                if desired_share_assets and added_assets_per_share is not None:
+                    added_assets_per_share.append(
+                        {
+                            "share_name": share_name,
+                            "added_assets": list(desired_share_assets),
+                            "ext_catalog_name": ext_catalog_name,
+                            "ext_schema_name": ext_schema_name,
+                        }
+                    )
                 continue
 
         # Share exists: update objects and recipients to match config
@@ -328,7 +368,12 @@ async def ensure_shares(
                 {
                     "action": "matching",
                     "share_name": share_name,
-                    "databricks_share_id": share_name,
+                    # Use existing.name (Databricks-returned value) to match what was stored on creation.
+                    # share_name from YAML may differ in case (e.g. "WD_Share" vs "wd_share"),
+                    # causing false SCD2 versions on every run.
+                    "databricks_share_id": existing.name
+                    if hasattr(existing, "name") and existing.name
+                    else share_name,
                     "description": desc,
                     "storage_root": "",
                     "share_assets": desired_share_assets,
@@ -397,6 +442,31 @@ async def ensure_shares(
             if isinstance(rem_result, str) and "not found" not in rem_result.lower():
                 raise RuntimeError(f"Failed to remove recipient {rec} from share {share_name}: {rem_result}")
 
+        # Collect removed assets so the orchestrator can delete their pipelines (DB-first,
+        # Databricks fallback) after all share Databricks ops succeed.
+        all_removed_assets = to_remove_tables + to_remove_views + to_remove_schemas
+        if all_removed_assets and removed_assets_per_share is not None:
+            removed_assets_per_share.append(
+                {
+                    "share_name": share_name,
+                    "removed_assets": all_removed_assets,
+                    "ext_catalog_name": ext_catalog_name,
+                    "ext_schema_name": ext_schema_name,
+                }
+            )
+
+        # Collect newly added assets so the orchestrator can verify/sync their pipelines.
+        all_added_assets = to_add_tables + to_add_views + to_add_schemas
+        if all_added_assets and added_assets_per_share is not None:
+            added_assets_per_share.append(
+                {
+                    "share_name": share_name,
+                    "added_assets": all_added_assets,
+                    "ext_catalog_name": ext_catalog_name,
+                    "ext_schema_name": ext_schema_name,
+                }
+            )
+
         created_resources["shares"].append(f"{share_name} (updated)")
         logger.success(f"Updated share: {share_name}")
 
@@ -411,7 +481,9 @@ async def ensure_shares(
             {
                 "action": "updated",
                 "share_name": share_name,
-                "databricks_share_id": share_name,
+                # Use existing.name (Databricks-returned value) to match what was stored on creation.
+                # share_name from YAML may differ in case, causing false SCD2 versions.
+                "databricks_share_id": existing.name if hasattr(existing, "name") and existing.name else share_name,
                 "description": desc,
                 "storage_root": "",
                 "share_assets": actual_assets,

@@ -184,7 +184,12 @@ def _validate_parsed_config(config: SharePackConfig) -> None:
     from dbrx_api.workflow.orchestrator.provisioning import validate_sharepack_config
 
     validate_metadata(config_dict["metadata"])
-    validate_sharepack_config(config_dict)
+
+    # DELETE strategy uses name-only config with placeholder values — skip NEW/UPDATE validation
+    # (the pipeline-vs-assets consistency checks do not apply to teardown configs)
+    strategy = str(config_dict.get("metadata", {}).get("strategy", "NEW")).upper()
+    if strategy != "DELETE":
+        validate_sharepack_config(config_dict)
 
 
 def validate_sharepack_config(config: SharePackConfig) -> list[str]:

@@ -30,8 +30,11 @@ from dbrx_api.workflow.db.repository_share import ShareRepository
 from dbrx_api.workflow.orchestrator.db_persist import persist_pipelines_to_db
 from dbrx_api.workflow.orchestrator.db_persist import persist_recipients_to_db
 from dbrx_api.workflow.orchestrator.db_persist import persist_shares_to_db
+from dbrx_api.workflow.orchestrator.db_persist import propagate_share_ids_to_pipelines
 from dbrx_api.workflow.orchestrator.pipeline_cleanup import cleanup_orphaned_pipelines
 from dbrx_api.workflow.orchestrator.pipeline_flow import _rollback_pipelines
+from dbrx_api.workflow.orchestrator.pipeline_flow import check_and_sync_pipelines_for_added_assets
+from dbrx_api.workflow.orchestrator.pipeline_flow import delete_pipelines_for_removed_assets
 from dbrx_api.workflow.orchestrator.pipeline_flow import ensure_pipelines
 from dbrx_api.workflow.orchestrator.provisioning import validate_metadata
 from dbrx_api.workflow.orchestrator.provisioning import validate_sharepack_config
@@ -87,6 +90,8 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
     share_db_entries = []
     pipeline_rollback_list = []
     pipeline_db_entries = []
+    removed_assets_per_share: list = []
+    added_assets_per_share: list = []
 
     try:
         import json
@@ -142,7 +147,26 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
                 rollback_list=share_rollback_list,
                 db_entries=share_db_entries,
                 created_resources=updated_resources,
+                removed_assets_per_share=removed_assets_per_share,
+                added_assets_per_share=added_assets_per_share,
             )
+
+            # Step 3.5: Delete pipelines for removed assets (DB-first, Databricks fallback)
+            for item in removed_assets_per_share:
+                deleted_pipelines = await delete_pipelines_for_removed_assets(
+                    workspace_url=workspace_url,
+                    share_name=item["share_name"],
+                    removed_assets=item["removed_assets"],
+                    pipeline_repo=pipeline_repo,
+                    ext_catalog_name=item.get("ext_catalog_name"),
+                    ext_schema_name=item.get("ext_schema_name"),
+                )
+                if deleted_pipelines:
+                    updated_resources.setdefault("deleted_pipelines", []).extend(deleted_pipelines)
+                    logger.info(
+                        f"Deleted {len(deleted_pipelines)} pipeline(s) for removed assets "
+                        f"from share '{item['share_name']}': {deleted_pipelines}"
+                    )
         else:
             logger.info("No shares section - skipping share updates")
             await tracker.update("Step 3/8: Skipping shares (not in config)")
@@ -158,6 +182,21 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
                 db_entries=pipeline_db_entries,
                 created_resources=updated_resources,
             )
+
+            # Step 4.5b: Verify every newly added share asset has a pipeline.
+            # Checks YAML config (pipeline_db_entries), DB, then Databricks API.
+            # If a pipeline exists in Databricks but not DB, adds a minimal DB entry.
+            # If no pipeline is found for any asset, raises ValueError → triggers rollback
+            # of all Databricks changes (pipelines, shares, recipients) made this run.
+            if added_assets_per_share:
+                current_step = "Step 4.5b/8: Verifying pipelines for newly added share assets"
+                await tracker.update(current_step)
+                await check_and_sync_pipelines_for_added_assets(
+                    workspace_url=workspace_url,
+                    added_assets_per_share=added_assets_per_share,
+                    pipeline_db_entries=pipeline_db_entries,
+                    pipeline_repo=pipeline_repo,
+                )
 
             # Step 5: Report schedule updates
             await tracker.update("Step 5/8: Pipeline schedules updated")
@@ -180,6 +219,10 @@ async def provision_sharepack_update(pool, share_pack: Dict[str, Any]):
             await persist_pipelines_to_db(
                 pipeline_db_entries, share_pack_id, share_name_to_id, share_repo, pipeline_repo
             )
+        # Propagate current share_ids to any pipeline records that pre-date this
+        # provisioning run and still reference a stale (old) share_id.
+        if share_name_to_id:
+            await propagate_share_ids_to_pipelines(share_name_to_id, pipeline_repo)
 
         # Step 7: Clean up orphaned pipelines (whose assets were removed from shares)
         # Re-enabled with enhanced debug logging to diagnose share lookup issues

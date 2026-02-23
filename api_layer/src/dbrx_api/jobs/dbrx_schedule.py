@@ -125,7 +125,9 @@ def list_schedules(
     else:
         fetch_limit = max_results
 
-    jobs_list = w_client.jobs.list(limit=fetch_limit, page_token=page_token)
+    # expand_tasks=True includes task details (pipeline IDs) in the list response,
+    # eliminating the need for individual jobs.get() calls (N+1 query problem).
+    jobs_list = w_client.jobs.list(limit=fetch_limit, page_token=page_token, expand_tasks=True)
 
     all_jobs = []
     processed_count = 0
@@ -141,9 +143,9 @@ def list_schedules(
             break
 
         try:
-            # Get full job details
-            job = w_client.jobs.get(job_id=job_summary.job_id)
-            settings = job.settings
+            # Use job_summary.settings directly — expand_tasks=True already includes
+            # task details in the list response, so no individual get() call is needed.
+            settings = job_summary.settings
 
             if not settings:
                 continue
@@ -443,30 +445,23 @@ def delete_schedule_for_pipeline(
             return f"Schedule deleted successfully: {job_name} (job_id: {job_id})"
 
         else:
-            # Delete all jobs/schedules for the pipeline
-            # Get all schedules for this pipeline
-            all_jobs = list(w_client.jobs.list())
+            # Delete all jobs/schedules for the pipeline.
+            # expand_tasks=True includes task details in list response, avoiding
+            # individual jobs.get() calls for each job (N+1 query problem).
             deleted_jobs = []
 
-            for job in all_jobs:
-                # Get job details to check if it's for our pipeline
-                job_details = w_client.jobs.get(job_id=job.job_id)
-                if job_details.settings and job_details.settings.tasks:
-                    is_pipeline_job = False
-                    for task in job_details.settings.tasks:
-                        # Check if this task is a pipeline task for our specific pipeline
-                        if (
-                            task.pipeline_task is not None
-                            and task.pipeline_task.pipeline_id is not None
-                            and str(task.pipeline_task.pipeline_id) == str(pipeline_id)
-                        ):
-                            is_pipeline_job = True
-                            break
-
-                    # Only delete if this job is specifically for our pipeline
-                    if is_pipeline_job:
-                        w_client.jobs.delete(job_id=job.job_id)
-                        deleted_jobs.append(job_details.settings.name or str(job.job_id))
+            for job in w_client.jobs.list(expand_tasks=True):
+                if not (job.settings and job.settings.tasks):
+                    continue
+                is_pipeline_job = any(
+                    task.pipeline_task is not None
+                    and task.pipeline_task.pipeline_id is not None
+                    and str(task.pipeline_task.pipeline_id) == str(pipeline_id)
+                    for task in job.settings.tasks
+                )
+                if is_pipeline_job:
+                    w_client.jobs.delete(job_id=job.job_id)
+                    deleted_jobs.append(job.settings.name or str(job.job_id))
 
             if not deleted_jobs:
                 return f"No schedules found for pipeline: {pipeline_id}"

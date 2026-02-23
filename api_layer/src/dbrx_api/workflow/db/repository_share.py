@@ -76,6 +76,13 @@ class ShareRepository(BaseRepository):
         existing = await self.list_by_share_name(share_name)
         if existing:
             share_id = existing[0]["share_id"]
+        else:
+            # Also check soft-deleted records: reusing their share_id lets SCD2
+            # expire the deleted version and insert a fresh active one, rather than
+            # failing with a unique constraint violation on (share_name, is_current=true).
+            deleted = await self.list_by_share_name(share_name, include_deleted=True)
+            if deleted:
+                share_id = deleted[0]["share_id"]
 
         fields = {
             "share_pack_id": share_pack_id,
@@ -125,6 +132,11 @@ class ShareRepository(BaseRepository):
                 # on (share_name) WHERE is_current=true AND is_deleted=false.
                 all_records = await self.list_by_share_name(share_name)
                 match = all_records[0] if all_records else None
+            if not match:
+                # Final fallback: also check soft-deleted records to reuse their share_id.
+                # This prevents unique constraint violations when re-provisioning a deleted share.
+                deleted_records = await self.list_by_share_name(share_name, include_deleted=True)
+                match = deleted_records[0] if deleted_records else None
             share_id = match["share_id"] if match else uuid4()
             is_update = match is not None
         else:
@@ -149,13 +161,15 @@ class ShareRepository(BaseRepository):
     async def list_by_share_name(
         self,
         share_name: str,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """Get all current share records with this name (any share_pack_id or NULL)."""
+        deleted_filter = "" if include_deleted else "AND is_deleted = false"
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT * FROM deltashare.shares
-                WHERE share_name = $1 AND is_current = true AND is_deleted = false
+                WHERE share_name = $1 AND is_current = true {deleted_filter}
                 ORDER BY share_pack_id NULLS LAST
                 """,
                 share_name,

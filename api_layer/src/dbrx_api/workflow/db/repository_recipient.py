@@ -95,6 +95,13 @@ class RecipientRepository(BaseRepository):
         existing = await self.list_by_recipient_name(recipient_name)
         if existing:
             recipient_id = existing[0]["recipient_id"]
+        else:
+            # Also check soft-deleted records: reusing their recipient_id lets SCD2
+            # expire the deleted version and insert a fresh active one, rather than
+            # failing with a unique constraint violation on (recipient_name, is_current=true).
+            deleted = await self.list_by_recipient_name(recipient_name, include_deleted=True)
+            if deleted:
+                recipient_id = deleted[0]["recipient_id"]
 
         fields = {
             "share_pack_id": share_pack_id,
@@ -165,6 +172,11 @@ class RecipientRepository(BaseRepository):
                 # on (recipient_name) WHERE is_current=true AND is_deleted=false.
                 all_records = await self.list_by_recipient_name(recipient_name)
                 match = all_records[0] if all_records else None
+            if not match:
+                # Final fallback: also check soft-deleted records to reuse their recipient_id.
+                # This prevents unique constraint violations when re-provisioning a deleted recipient.
+                deleted_records = await self.list_by_recipient_name(recipient_name, include_deleted=True)
+                match = deleted_records[0] if deleted_records else None
             recipient_id = match["recipient_id"] if match else uuid4()
             is_update = match is not None
         else:
@@ -267,6 +279,7 @@ class RecipientRepository(BaseRepository):
     async def list_by_recipient_name(
         self,
         recipient_name: str,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Get all current recipient records with this name (across all share packs).
@@ -275,15 +288,17 @@ class RecipientRepository(BaseRepository):
 
         Args:
             recipient_name: Recipient name (e.g. from Databricks)
+            include_deleted: If True, include soft-deleted records (default: False)
 
         Returns:
             List of recipient dicts (each has recipient_id, share_pack_id, etc.)
         """
+        deleted_filter = "" if include_deleted else "AND is_deleted = false"
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 f"""
                 SELECT * FROM deltashare.{self.table}
-                WHERE recipient_name = $1 AND is_current = true AND is_deleted = false
+                WHERE recipient_name = $1 AND is_current = true {deleted_filter}
                 ORDER BY share_pack_id
                 """,
                 recipient_name,

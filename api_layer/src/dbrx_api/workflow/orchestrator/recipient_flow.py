@@ -249,16 +249,14 @@ async def ensure_recipients(
                     current_normalized = current_org.strip().lower()
                     new_normalized = new_org.strip().lower()
                     if current_normalized != new_normalized:
-                        raise ValueError(
-                            f"Cannot update 'recipient_databricks_org' for existing D2D recipient '{recipient_name}'.\n"
-                            f"  Current value: {current_org}\n"
-                            f"  Attempted new value: {new_org}\n\n"
-                            f"The 'recipient_databricks_org' (data_recipient_global_metastore_id) is an IMMUTABLE field "
-                            f"set during recipient creation and cannot be changed.\n\n"
-                            f"To change the target organization:\n"
-                            f"  1. Delete the existing recipient: '{recipient_name}'\n"
-                            f"  2. Create a new recipient with the desired organization\n\n"
-                            f"For D2D recipients, you can only update: description"
+                        # recipient_databricks_org (data_recipient_global_metastore_id) is immutable —
+                        # it can only be set at creation time and cannot be changed via the Databricks API.
+                        # Log a warning and skip this field; proceed with other updates (e.g. description).
+                        logger.warning(
+                            f"Skipping 'recipient_databricks_org' change for D2D recipient '{recipient_name}': "
+                            f"this field is immutable and cannot be updated after creation "
+                            f"(current={current_org}, requested={new_org}). "
+                            f"Proceeding with other updates (e.g. description) only."
                         )
                     else:
                         # Values match - log that we're ignoring it (no update needed)

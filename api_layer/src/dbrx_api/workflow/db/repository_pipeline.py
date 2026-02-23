@@ -80,6 +80,13 @@ class PipelineRepository(BaseRepository):
         existing = await self.list_by_pipeline_name(pipeline_name)
         if existing:
             pipeline_id = existing[0]["pipeline_id"]
+        else:
+            # Also check soft-deleted records: reusing their pipeline_id lets SCD2
+            # expire the deleted version and insert a fresh active one, rather than
+            # failing with a unique constraint violation on (pipeline_name, is_current=true).
+            deleted = await self.list_by_pipeline_name(pipeline_name, include_deleted=True)
+            if deleted:
+                pipeline_id = deleted[0]["pipeline_id"]
 
         fields = {
             "share_id": share_id,
@@ -137,6 +144,11 @@ class PipelineRepository(BaseRepository):
                 # on (pipeline_name) WHERE is_current=true AND is_deleted=false.
                 all_records = await self.list_by_pipeline_name(pipeline_name)
                 match = all_records[0] if all_records else None
+            if not match:
+                # Final fallback: also check soft-deleted records to reuse their pipeline_id.
+                # This prevents unique constraint violations when re-provisioning a deleted pipeline.
+                deleted_records = await self.list_by_pipeline_name(pipeline_name, include_deleted=True)
+                match = deleted_records[0] if deleted_records else None
             pipeline_id = match["pipeline_id"] if match else uuid4()
             is_update = match is not None
         else:
@@ -166,13 +178,15 @@ class PipelineRepository(BaseRepository):
     async def list_by_pipeline_name(
         self,
         pipeline_name: str,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """Get all current pipeline records with this pipeline_name (any share_pack_id or NULL)."""
+        deleted_filter = "" if include_deleted else "AND is_deleted = false"
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT * FROM deltashare.pipelines
-                WHERE pipeline_name = $1 AND is_current = true AND is_deleted = false
+                WHERE pipeline_name = $1 AND is_current = true {deleted_filter}
                 ORDER BY share_pack_id NULLS LAST
                 """,
                 pipeline_name,
@@ -304,6 +318,51 @@ class PipelineRepository(BaseRepository):
                 ORDER BY pipeline_name
                 """,
                 share_pack_id,
+            )
+            return [dict(row) for row in rows]
+
+    async def list_by_share_id(
+        self,
+        share_id: UUID,
+    ) -> List[Dict[str, Any]]:
+        """Get all active pipelines for a given share_id (any share pack)."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT * FROM deltashare.{self.table}
+                WHERE share_id = $1 AND is_current = true AND is_deleted = false
+                ORDER BY pipeline_name
+                """,
+                share_id,
+            )
+            return [dict(row) for row in rows]
+
+    async def list_by_share_name(
+        self,
+        share_name: str,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all active pipelines associated with a share, looked up by share name.
+
+        Uses a subquery that matches against ALL historical share_ids for the
+        given share_name so that pipelines with stale share_id references
+        (from previous provisioning runs before share UUID reuse was enforced)
+        are still found.
+        """
+        deleted_filter = "" if include_deleted else "AND p.is_deleted = false"
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT p.* FROM deltashare.{self.table} p
+                WHERE p.share_id IN (
+                    SELECT DISTINCT share_id FROM deltashare.shares
+                    WHERE share_name = $1
+                )
+                AND p.is_current = true {deleted_filter}
+                ORDER BY p.pipeline_name
+                """,
+                share_name,
             )
             return [dict(row) for row in rows]
 

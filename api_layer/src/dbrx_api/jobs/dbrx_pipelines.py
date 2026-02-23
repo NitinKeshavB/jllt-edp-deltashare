@@ -834,6 +834,66 @@ def delete_pipeline(
         return _handle_pipeline_error(e, "delete", pipeline_id)
 
 
+def find_pipelines_by_source_and_target(
+    dltshr_workspace_url: str,
+    source_tables: List[str],
+    ext_catalog_name: str,
+    ext_schema_name: str,
+) -> List[GetPipelineResponse]:
+    """
+    Find DLT pipelines whose source_table matches any entry in source_tables AND whose
+    target catalog and schema match ext_catalog_name and ext_schema_name.
+
+    The catalog+schema scope ensures only pipelines belonging to a specific share are
+    returned, preventing accidental deletion of pipelines from other shares.
+
+    Args:
+        dltshr_workspace_url: Databricks workspace URL
+        source_tables: Full source asset names to match (e.g., ["cat.schema.table"])
+        ext_catalog_name: Share's target catalog — used to scope to this share only
+        ext_schema_name: Share's target schema — used to scope to this share only
+
+    Returns:
+        List of GetPipelineResponse objects matching all three criteria.
+    """
+    if not DATABRICKS_SDK_AVAILABLE:
+        raise ImportError("Databricks SDK is not available")
+
+    source_table_set = {s.strip().lower() for s in source_tables if s}
+    matched: List[GetPipelineResponse] = []
+
+    try:
+        session_token = get_auth_token(datetime.now(timezone.utc))[0]
+        w_client = WorkspaceClient(host=dltshr_workspace_url, token=session_token)
+
+        for pipeline_info in w_client.pipelines.list_pipelines():
+            try:
+                full = w_client.pipelines.get(pipeline_id=pipeline_info.pipeline_id)
+                spec = full.spec
+                if not spec:
+                    continue
+
+                # Scope to this share's target catalog + schema (MANDATORY safety check)
+                if (spec.catalog or "").strip().lower() != ext_catalog_name.strip().lower():
+                    continue
+                if (spec.target or "").strip().lower() != ext_schema_name.strip().lower():
+                    continue
+
+                # Check if source_table matches any removed asset
+                config = spec.configuration or {}
+                source_table = (config.get("pipelines.source_table") or "").strip().lower()
+                if source_table in source_table_set:
+                    matched.append(full)
+
+            except Exception as e:
+                logger.warning(f"Could not inspect pipeline {pipeline_info.pipeline_id}: {e}")
+
+    except Exception as e:
+        logger.error(f"Failed to list pipelines while searching for asset cleanup: {e}")
+
+    return matched
+
+
 def update_pipeline_target_configuration(
     dltshr_workspace_url: str,
     pipeline_id: str,

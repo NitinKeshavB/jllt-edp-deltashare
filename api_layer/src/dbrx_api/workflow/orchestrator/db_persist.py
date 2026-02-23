@@ -6,6 +6,7 @@ happen on the happy path. If any ensure_* step fails, Databricks is
 rolled back and no DB writes are attempted.
 """
 
+import json
 from typing import Any
 from typing import Dict
 from typing import List
@@ -36,6 +37,15 @@ async def persist_recipients_to_db(
                 pass
 
         try:
+            # For "matching" action, Databricks is already in the correct state and the
+            # DB record reflects the last successful provisioning. Skip the upsert to
+            # avoid spurious SCD2 versions caused by metadata-only diffs (e.g.
+            # share_pack_id gets a new UUID on every API call).
+            if action == "matching":
+                entry["action"] = "unchanged"
+                logger.info(f"Persisted recipient '{recipient_name}' to DB (unchanged)")
+                continue
+
             # Get current version before operation (to detect if versioning occurred)
             current_before = None
             current_record_id_before = None
@@ -131,12 +141,61 @@ async def persist_shares_to_db(
                 pass
 
         try:
+            # For "matching" action, Databricks is already in the correct state and the
+            # DB record reflects the last successful provisioning. Skip the upsert to
+            # avoid spurious SCD2 versions caused by metadata-only diffs (e.g.
+            # share_pack_id gets a new UUID on every API call).
+            if action == "matching":
+                share_name_to_id[share_name] = share_id
+                entry["action"] = "unchanged"
+                logger.info(f"Persisted share '{share_name}' to DB (unchanged)")
+                continue
+
             # Get current version before operation (to detect if versioning occurred)
             current_before = None
             current_record_id_before = None
             if share_id:
                 current_before = await share_repo.get_current(share_id, include_deleted=False)
                 current_record_id_before = current_before.get("record_id") if current_before else None
+
+            # For updates: preserve optional metadata from the current DB record when not
+            # explicitly provided in the YAML. This prevents:
+            #   1. False SCD2 versions from databricks_share_id case differences
+            #      (Databricks may normalise the name; old DB rows may have a different case)
+            #   2. False SCD2 versions from empty-string overwrites when ext_catalog_name,
+            #      ext_schema_name, prefix_assetname, or share_tags are absent from the YAML.
+            if action != "created" and current_before:
+                # --- databricks_share_id case fix ---
+                stored_dbrx_id = (current_before.get("databricks_share_id") or "").strip()
+                new_dbrx_id = (entry.get("databricks_share_id") or "").strip()
+                if stored_dbrx_id and new_dbrx_id and stored_dbrx_id.lower() == new_dbrx_id.lower():
+                    # Same name, only case differs — keep the value already in the DB
+                    # so no SCD2 version is triggered for a cosmetic difference.
+                    if stored_dbrx_id != new_dbrx_id:
+                        logger.debug(
+                            f"Share '{share_name}': preserving databricks_share_id case from DB "
+                            f"('{new_dbrx_id}' → '{stored_dbrx_id}')"
+                        )
+                    entry["databricks_share_id"] = stored_dbrx_id
+
+                # --- preserve optional metadata fields when not provided in YAML ---
+                for _field in ("ext_catalog_name", "ext_schema_name", "prefix_assetname"):
+                    if not entry.get(_field) and current_before.get(_field):
+                        entry[_field] = current_before[_field]
+
+                # share_tags: entry holds a list ([] when absent from YAML); DB holds a JSON string.
+                if not entry.get("share_tags"):
+                    _raw_tags = current_before.get("share_tags")
+                    if _raw_tags:
+                        if isinstance(_raw_tags, str):
+                            try:
+                                _parsed = json.loads(_raw_tags)
+                                if _parsed:
+                                    entry["share_tags"] = _parsed
+                            except (json.JSONDecodeError, TypeError, ValueError):
+                                pass
+                        elif isinstance(_raw_tags, list) and _raw_tags:
+                            entry["share_tags"] = _raw_tags
 
             if action == "created":
                 returned_id = await share_repo.create_from_config(
@@ -276,6 +335,14 @@ async def persist_pipelines_to_db(
                     entry["action"] = "updated"
 
         try:
+            # For "matching" action (and not overridden to "updated" by the stale
+            # share_id check above), pipeline is up-to-date in Databricks and DB.
+            # Skip the upsert to avoid spurious SCD2 versions.
+            if entry["action"] == "matching":
+                entry["action"] = "unchanged"
+                logger.info(f"Persisted pipeline '{pipeline_name}' to DB (unchanged)")
+                continue
+
             # Get current version before operation (to detect if versioning occurred)
             current_before = None
             current_record_id_before = None
@@ -349,4 +416,88 @@ async def persist_pipelines_to_db(
         except Exception as db_err:
             logger.opt(exception=True).warning(
                 f"Failed to persist pipeline '{pipeline_name}' ({action}) " f"to DB: {db_err}"
+            )
+
+
+async def propagate_share_ids_to_pipelines(
+    share_name_to_id: Dict[str, UUID],
+    pipeline_repo: Any,
+) -> None:
+    """
+    Ensure all active pipeline records use the current share_id for their share.
+
+    When a share is recreated and gets a new share_id, pipeline records created
+    under the previous provisioning still reference the old share_id. These stale
+    references prevent share_id-based lookups (e.g. during DELETE provisioning) from
+    finding all pipelines that belong to the share.
+
+    This function is called after persist_shares_to_db and persist_pipelines_to_db.
+    At that point share_name_to_id contains the definitive current share_id for every
+    share that was just provisioned. For each share we:
+
+    1. Query all active pipelines via list_by_share_name, which internally searches
+       across ALL historical share_ids for the share name, so stale records are found.
+    2. For any pipeline whose share_id differs from the current share_id, rewrite the
+       record via upsert_from_config, producing a new SCD2 version with the correct
+       share_id and otherwise identical fields.
+
+    Pipelines that were explicitly written by persist_pipelines_to_db in this same run
+    will already have the correct share_id and are silently skipped (no duplicate write).
+    """
+    for share_name, current_share_id in share_name_to_id.items():
+        try:
+            all_pipelines = await pipeline_repo.list_by_share_name(share_name)
+            stale = [p for p in all_pipelines if p.get("share_id") != current_share_id]
+            if not stale:
+                continue
+
+            logger.info(
+                "Propagating share_id {} to {} stale pipeline record(s) for share '{}'",
+                current_share_id,
+                len(stale),
+                share_name,
+            )
+            for pipeline_rec in stale:
+                pipeline_name = pipeline_rec["pipeline_name"]
+                try:
+                    raw_tags = pipeline_rec.get("tags") or "{}"
+                    tags = json.loads(raw_tags) if isinstance(raw_tags, str) else (raw_tags or {})
+                    raw_notifs = pipeline_rec.get("notification_list") or "[]"
+                    notifs = json.loads(raw_notifs) if isinstance(raw_notifs, str) else (raw_notifs or [])
+                    await pipeline_repo.upsert_from_config(
+                        share_id=current_share_id,
+                        share_pack_id=pipeline_rec.get("share_pack_id"),
+                        pipeline_name=pipeline_name,
+                        databricks_pipeline_id=pipeline_rec.get("databricks_pipeline_id", ""),
+                        asset_name=pipeline_rec.get("asset_name", ""),
+                        source_table=pipeline_rec.get("source_table", ""),
+                        target_table=pipeline_rec.get("target_table", ""),
+                        scd_type=str(pipeline_rec.get("scd_type") or "2"),
+                        key_columns=pipeline_rec.get("key_columns", ""),
+                        schedule_type=pipeline_rec.get("schedule_type", "CRON"),
+                        cron_expression=pipeline_rec.get("cron_expression", ""),
+                        timezone=pipeline_rec.get("cron_timezone", "UTC"),
+                        serverless=bool(pipeline_rec.get("serverless", False)),
+                        tags=tags,
+                        notification_emails=notifs,
+                        created_by="orchestrator",
+                        pipeline_id=pipeline_rec["pipeline_id"],
+                    )
+                    logger.info(
+                        "Updated share_id for pipeline '{}': {} → {}",
+                        pipeline_name,
+                        pipeline_rec.get("share_id"),
+                        current_share_id,
+                    )
+                except Exception as pipe_err:  # pylint: disable=broad-except
+                    logger.warning(
+                        "Failed to propagate share_id to pipeline '{}': {}",
+                        pipeline_name,
+                        pipe_err,
+                    )
+        except Exception as share_err:  # pylint: disable=broad-except
+            logger.warning(
+                "Failed to propagate share_id for share '{}': {}",
+                share_name,
+                share_err,
             )

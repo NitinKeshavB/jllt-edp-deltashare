@@ -470,7 +470,9 @@ class ShareConfig(BaseModel):
     recipients_to_add: List[str] = Field(default_factory=list)  # Recipients to add to share
     recipients_to_remove: List[str] = Field(default_factory=list)  # Recipients to remove from share
 
-    delta_share: DeltaShareConfig  # Target workspace config (required when pipelines present; use placeholder if schedules-only)
+    delta_share: Optional[
+        DeltaShareConfig
+    ] = None  # Target workspace config (required when pipelines present; optional if no pipelines)
     pipelines: List[PipelineConfig] = Field(default_factory=list)  # Pipeline configs
 
     class Config:

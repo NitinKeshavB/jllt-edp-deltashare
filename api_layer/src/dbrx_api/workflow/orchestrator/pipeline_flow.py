@@ -18,6 +18,7 @@ from loguru import logger
 
 from dbrx_api.jobs.dbrx_pipelines import create_pipeline
 from dbrx_api.jobs.dbrx_pipelines import delete_pipeline
+from dbrx_api.jobs.dbrx_pipelines import find_pipelines_by_source_and_target
 from dbrx_api.jobs.dbrx_pipelines import get_pipeline_by_name
 from dbrx_api.jobs.dbrx_pipelines import list_pipelines_with_search_criteria
 from dbrx_api.jobs.dbrx_pipelines import update_pipeline_target_configuration
@@ -26,6 +27,7 @@ from dbrx_api.jobs.dbrx_schedule import delete_schedule_for_pipeline
 from dbrx_api.jobs.dbrx_schedule import list_schedules
 from dbrx_api.jobs.dbrx_schedule import update_schedule_for_pipeline
 from dbrx_api.jobs.dbrx_schedule import update_timezone_for_schedule
+from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
 
 
 def _resolve_source_asset(pipeline_config: Dict[str, Any], pipeline_name: str) -> str:
@@ -571,3 +573,274 @@ async def ensure_pipelines(
                     created_resources=created_resources,
                 )
                 db_entries.append(db_entry)
+
+
+async def delete_pipelines_for_removed_assets(
+    workspace_url: str,
+    share_name: str,
+    removed_assets: List[str],
+    pipeline_repo: Optional[PipelineRepository] = None,
+    ext_catalog_name: Optional[str] = None,
+    ext_schema_name: Optional[str] = None,
+) -> List[str]:
+    """Delete DLT pipelines (and their schedules) for assets removed from a share.
+
+    Strategy: DB-first, Databricks API fallback.
+    1. Query the DB pipeline table via pipeline_repo to find pipeline records for this
+       share + source_table combination — uses the stored databricks_pipeline_id directly.
+    2. For any removed assets not found in the DB, fall back to scanning Databricks pipelines
+       filtered by source_table AND (if available) ext_catalog_name + ext_schema_name.
+
+    The DB-first approach is preferred: it is fast (indexed query), reliable (no N+1 Databricks
+    API calls), and scoped to this share via share_id FK. The Databricks fallback handles cases
+    where the pipeline was created outside a share pack (no DB record).
+
+    Args:
+        workspace_url: Databricks workspace URL
+        share_name: Share name — used to scope the DB lookup to this share only
+        removed_assets: Full source asset names being removed (e.g. catalog.schema.table)
+        pipeline_repo: PipelineRepository instance for DB-first lookup (optional)
+        ext_catalog_name: Share's target catalog — used only for Databricks API fallback scope
+        ext_schema_name: Share's target schema — used only for Databricks API fallback scope
+
+    Returns:
+        List of pipeline names that were deleted.
+    """
+    if not removed_assets:
+        return []
+
+    {a.strip().lower() for a in removed_assets if a}
+    deleted: List[str] = []
+    assets_not_in_db: List[str] = list(removed_assets)  # start with all; remove as DB matches found
+
+    # ── Phase 1: DB-first lookup ────────────────────────────────────────────────
+    if pipeline_repo is not None:
+        try:
+            db_pipelines = await pipeline_repo.list_by_share_name(share_name)
+        except Exception as db_err:
+            logger.warning(f"DB lookup for pipelines failed, will use Databricks fallback: {db_err}")
+            db_pipelines = []
+
+        assets_not_in_db = []
+        for asset in removed_assets:
+            asset_lower = asset.strip().lower()
+            matches = [p for p in db_pipelines if (p.get("source_table") or "").strip().lower() == asset_lower]
+            if not matches:
+                logger.debug(f"No DB record for removed asset '{asset}' in share '{share_name}' — will try Databricks")
+                assets_not_in_db.append(asset)
+                continue
+
+            for row in matches:
+                dbrx_pipeline_id = row.get("databricks_pipeline_id")
+                pipeline_name = row.get("pipeline_name") or dbrx_pipeline_id
+                if not dbrx_pipeline_id:
+                    logger.warning(
+                        f"DB record for pipeline '{pipeline_name}' has no databricks_pipeline_id — skipping"
+                    )
+                    continue
+
+                logger.info(f"Found pipeline '{pipeline_name}' via DB for removed asset '{asset}'")
+                _delete_single_pipeline(workspace_url, dbrx_pipeline_id, pipeline_name, asset, deleted)
+
+    # ── Phase 2: Databricks API fallback (for assets not found in DB) ───────────
+    if assets_not_in_db:
+        if not ext_catalog_name or not ext_schema_name:
+            logger.warning(
+                f"Cannot find pipelines for {len(assets_not_in_db)} removed asset(s) via Databricks API: "
+                "delta_share.ext_catalog_name and ext_schema_name are required to safely scope the search "
+                "to this share only. Add them to the share's delta_share config."
+            )
+        else:
+            logger.info(
+                f"Databricks fallback: searching for pipelines for {len(assets_not_in_db)} asset(s) "
+                f"not found in DB: {assets_not_in_db}"
+            )
+            matched = find_pipelines_by_source_and_target(
+                dltshr_workspace_url=workspace_url,
+                source_tables=assets_not_in_db,
+                ext_catalog_name=ext_catalog_name,
+                ext_schema_name=ext_schema_name,
+            )
+            for pipeline in matched:
+                dbrx_pipeline_id = pipeline.pipeline_id
+                pipeline_name = pipeline.name or dbrx_pipeline_id
+                source_table = (
+                    (pipeline.spec.configuration or {}).get("pipelines.source_table", "unknown")
+                    if pipeline.spec
+                    else "unknown"
+                )
+                _delete_single_pipeline(workspace_url, dbrx_pipeline_id, pipeline_name, source_table, deleted)
+
+    return deleted
+
+
+def _delete_single_pipeline(
+    workspace_url: str,
+    pipeline_id: str,
+    pipeline_name: str,
+    source_table: str,
+    deleted: List[str],
+) -> None:
+    """Delete schedule + pipeline for one pipeline; appends name to deleted on success."""
+    try:
+        delete_schedule_for_pipeline(dltshr_workspace_url=workspace_url, pipeline_id=pipeline_id)
+        logger.info(f"Deleted schedule(s) for pipeline '{pipeline_name}'")
+    except Exception as e:
+        logger.warning(f"Could not delete schedule for pipeline '{pipeline_name}': {e}")
+
+    try:
+        result = delete_pipeline(dltshr_workspace_url=workspace_url, pipeline_id=pipeline_id)
+        if isinstance(result, str):
+            logger.warning(f"Pipeline delete warning for '{pipeline_name}': {result}")
+        else:
+            logger.success(f"Deleted pipeline '{pipeline_name}' (source_table={source_table})")
+            deleted.append(pipeline_name)
+    except Exception as e:
+        logger.error(f"Failed to delete pipeline '{pipeline_name}': {e}")
+
+
+async def check_and_sync_pipelines_for_added_assets(
+    workspace_url: str,
+    added_assets_per_share: List[Dict[str, Any]],
+    pipeline_db_entries: List[Dict[str, Any]],
+    pipeline_repo: Optional[PipelineRepository] = None,
+) -> None:
+    """Verify that every newly added share asset has a DLT pipeline.
+
+    For each asset in added_assets_per_share:
+    1. Skip if already covered by pipeline_db_entries (YAML pipeline config processed
+       by ensure_pipelines).
+    2. Check the DB (pipeline_repo) for an existing record matching share + source_table.
+       If found, the asset is already tracked — log and skip.
+    3. Check Databricks API for an existing pipeline (requires ext_catalog_name +
+       ext_schema_name for safe scoping). If found, append a minimal entry to
+       pipeline_db_entries so the record is created/updated in the DB write step.
+    4. If not found anywhere: collect the asset as missing.
+
+    After processing all assets, if any are missing, raises ValueError with a clear
+    message listing every share + asset that needs a pipeline config. The caller's
+    existing try/except rollback block handles undoing all Databricks changes.
+
+    Raises:
+        ValueError: If one or more newly added assets have no pipeline in YAML, DB,
+                    or Databricks. Rolling back share/pipeline/recipient changes is the
+                    caller's responsibility (handled by the provisioning orchestrators).
+    """
+    if not added_assets_per_share:
+        return
+
+    # Build set of (share_name, source_table_lower) already covered by YAML pipeline config
+    covered: set = {
+        (e.get("share_name", ""), (e.get("source_table") or "").strip().lower())
+        for e in pipeline_db_entries
+        if e.get("source_table")
+    }
+
+    # missing: {share_name: [asset, ...]}
+    missing: Dict[str, List[str]] = {}
+
+    for item in added_assets_per_share:
+        share_name = item["share_name"]
+        ext_catalog_name = (item.get("ext_catalog_name") or "").strip()
+        ext_schema_name = (item.get("ext_schema_name") or "").strip()
+
+        for asset in item["added_assets"]:
+            asset_lower = asset.strip().lower()
+
+            # ── 1. Already covered by YAML pipeline config ──────────────────
+            if (share_name, asset_lower) in covered:
+                logger.debug(
+                    f"Asset '{asset}' added to share '{share_name}': "
+                    "covered by YAML pipeline config — skipping pipeline check."
+                )
+                continue
+
+            # ── 2. DB lookup ─────────────────────────────────────────────────
+            db_found = False
+            if pipeline_repo is not None:
+                try:
+                    db_pipelines = await pipeline_repo.list_by_share_name(share_name)
+                    matches = [p for p in db_pipelines if (p.get("source_table") or "").strip().lower() == asset_lower]
+                    if matches:
+                        db_found = True
+                        logger.info(
+                            f"Asset '{asset}' added to share '{share_name}': "
+                            f"pipeline '{matches[0].get('pipeline_name')}' already tracked in DB — no action needed."
+                        )
+                except Exception as db_err:
+                    logger.warning(f"DB pipeline check for asset '{asset}' in share '{share_name}': {db_err}")
+
+            if db_found:
+                continue
+
+            # ── 3. Databricks API fallback ───────────────────────────────────
+            dbrx_found = False
+            if ext_catalog_name and ext_schema_name:
+                try:
+                    matched = find_pipelines_by_source_and_target(
+                        dltshr_workspace_url=workspace_url,
+                        source_tables=[asset],
+                        ext_catalog_name=ext_catalog_name,
+                        ext_schema_name=ext_schema_name,
+                    )
+                    if matched:
+                        dbrx_found = True
+                        for pipeline in matched:
+                            p_name = pipeline.name or pipeline.pipeline_id
+                            src_tbl = (
+                                (pipeline.spec.configuration or {}).get("pipelines.source_table", asset)
+                                if pipeline.spec
+                                else asset
+                            )
+                            logger.info(
+                                f"Asset '{asset}' added to share '{share_name}': "
+                                f"found existing Databricks pipeline '{p_name}'. "
+                                "Adding minimal DB record for tracking."
+                            )
+                            # Append to pipeline_db_entries so persist_pipelines_to_db creates a DB record
+                            pipeline_db_entries.append(
+                                {
+                                    "action": "updated",
+                                    "pipeline_name": p_name,
+                                    "pipeline_id": None,
+                                    "databricks_pipeline_id": pipeline.pipeline_id,
+                                    "share_name": share_name,
+                                    "source_table": src_tbl,
+                                    "asset_name": src_tbl.split(".")[-1] if "." in src_tbl else src_tbl,
+                                    "target_table": (pipeline.spec.target or "") if pipeline.spec else "",
+                                    "scd_type": "2",
+                                    "key_columns": "",
+                                    "schedule_type": "CRON",
+                                    "cron_expression": "",
+                                    "timezone": "UTC",
+                                    "serverless": bool(pipeline.spec.serverless) if pipeline.spec else False,
+                                    "tags": {},
+                                    "notification_emails": [],
+                                }
+                            )
+                except Exception as dbrx_err:
+                    logger.warning(
+                        f"Databricks pipeline check for asset '{asset}' in share '{share_name}': {dbrx_err}"
+                    )
+            else:
+                logger.debug(
+                    f"Asset '{asset}' added to share '{share_name}': "
+                    "skipping Databricks pipeline search — ext_catalog_name and ext_schema_name "
+                    "are required in the delta_share config to safely scope the search."
+                )
+
+            # ── 4. Not found anywhere ────────────────────────────────────────
+            if not dbrx_found:
+                missing.setdefault(share_name, []).append(asset)
+
+    if missing:
+        lines = [f"  - Share '{sn}': {', '.join(assets)}" for sn, assets in missing.items()]
+        raise ValueError(
+            "The following assets were added to shares but have no DLT pipeline "
+            "configured in the YAML, tracked in the database, or found in Databricks.\n"
+            + "\n".join(lines)
+            + "\n\nPlease add a 'pipelines' section in the YAML for each asset, or ensure "
+            "the pipeline already exists in Databricks (with ext_catalog_name and "
+            "ext_schema_name set in the delta_share config for automatic detection).\n"
+            "All share/recipient changes from this run have been rolled back."
+        )

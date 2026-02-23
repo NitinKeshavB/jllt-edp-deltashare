@@ -12,11 +12,12 @@ from typing import List
 from typing import Set
 from uuid import UUID
 
+from loguru import logger
+
 from dbrx_api.jobs.dbrx_pipelines import delete_pipeline
 from dbrx_api.jobs.dbrx_schedule import delete_schedule_for_pipeline
 from dbrx_api.workflow.db.repository_pipeline import PipelineRepository
 from dbrx_api.workflow.db.repository_share import ShareRepository
-from loguru import logger
 
 
 async def cleanup_orphaned_pipelines(
@@ -58,9 +59,7 @@ async def cleanup_orphaned_pipelines(
     for share_id in unique_share_ids:
         try:
             # Get current version of share (regardless of share_pack_id)
-            current_share = await share_repo.get_current(
-                share_id, include_deleted=False
-            )
+            current_share = await share_repo.get_current(share_id, include_deleted=False)
             if current_share:
                 share_assets = current_share.get("share_assets") or []
                 logger.info(
@@ -71,15 +70,11 @@ async def cleanup_orphaned_pipelines(
                 # Parse JSON if needed
                 if isinstance(share_assets, str):
                     import json
-                    share_assets = (
-                        json.loads(share_assets) if share_assets else []
-                    )
+
+                    share_assets = json.loads(share_assets) if share_assets else []
                     logger.info(f"DEBUG: Parsed JSON: {share_assets}")
                 share_id_to_assets[share_id] = set(share_assets)
-                logger.info(
-                    f"Share {share_id}: {len(share_assets)} assets - "
-                    f"{share_assets}"
-                )
+                logger.info(f"Share {share_id}: {len(share_assets)} assets - " f"{share_assets}")
             else:
                 logger.warning(
                     f"Share {share_id} NOT found in DB. "
@@ -91,9 +86,7 @@ async def cleanup_orphaned_pipelines(
                 )
                 # DO NOT add to share_id_to_assets - skip these pipelines
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"ERROR: Failed to get assets for share {share_id}: {e}"
-            )
+            logger.opt(exception=True).error(f"ERROR: Failed to get assets for share {share_id}: {e}")
             # Do NOT add to share_id_to_assets on error - skip for safety
 
     # Get ALL shares (across all share packs) to check if asset exists elsewhere
@@ -118,10 +111,7 @@ async def cleanup_orphaned_pipelines(
         databricks_pipeline_id = pipeline_rec.get("databricks_pipeline_id")
 
         if not source_asset or not share_id:
-            logger.debug(
-                f"Pipeline '{pipeline_name}' missing source_asset or "
-                f"share_id, skipping"
-            )
+            logger.debug(f"Pipeline '{pipeline_name}' missing source_asset or " f"share_id, skipping")
             continue
 
         # Check if we have share info for this share_id
@@ -150,17 +140,11 @@ async def cleanup_orphaned_pipelines(
         if databricks_pipeline_id:
             try:
                 # Get all DB records pointing to this Databricks pipeline
-                all_pipeline_records = (
-                    await pipeline_repo.list_by_databricks_pipeline_id(
-                        databricks_pipeline_id, include_deleted=False
-                    )
+                all_pipeline_records = await pipeline_repo.list_by_databricks_pipeline_id(
+                    databricks_pipeline_id, include_deleted=False
                 )
                 # Exclude the current record we're processing
-                other_active_records = [
-                    r
-                    for r in all_pipeline_records
-                    if r["pipeline_id"] != pipeline_id
-                ]
+                other_active_records = [r for r in all_pipeline_records if r["pipeline_id"] != pipeline_id]
                 # Only delete from Databricks if NO other active records exist
                 if len(other_active_records) == 0:
                     # No other DB records - safe to delete from Databricks
@@ -183,9 +167,7 @@ async def cleanup_orphaned_pipelines(
                 )
                 should_delete_from_databricks = False
         else:
-            logger.warning(
-                f"Pipeline '{pipeline_name}' missing databricks_pipeline_id"
-            )
+            logger.warning(f"Pipeline '{pipeline_name}' missing databricks_pipeline_id")
 
         orphaned_pipelines.append(
             {
@@ -301,7 +283,7 @@ async def get_assets_being_removed(
 
         # Determine desired assets using same logic as share_flow.py
         share_assets_declarative = share_config.get("share_assets", [])
-        share_assets_to_add_explicit = share_config.get("share_assets_to_add", [])
+        share_config.get("share_assets_to_add", [])
         share_assets_to_remove_explicit = share_config.get("share_assets_to_remove", [])
 
         if share_assets_to_remove_explicit:
