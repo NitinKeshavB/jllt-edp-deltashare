@@ -53,6 +53,21 @@ async def persist_recipients_to_db(
                 current_before = await recipient_repo.get_current(recipient_id, include_deleted=False)
                 current_record_id_before = current_before.get("record_id") if current_before else None
 
+            # For updates: preserve optional metadata from the current DB record when not
+            # explicitly provided in the YAML. This prevents:
+            #   1. False SCD2 versions from description being overwritten with "" when the
+            #      YAML doesn't include a description field.
+            #   2. False SCD2 versions from token_expiry_days being reset to 0 when the
+            #      YAML doesn't include a token_expiry field.
+            # Note: ip_access_list is already correctly computed from _effective_ips_after_changes
+            # (preserves current IPs when neither recipient_ips_to_add nor recipient_ips_to_remove
+            # is specified), so no preservation is needed here for IPs.
+            if action != "created" and current_before:
+                if not entry.get("description") and current_before.get("description"):
+                    entry["description"] = current_before["description"]
+                if not entry.get("token_expiry_days") and current_before.get("token_expiry_days"):
+                    entry["token_expiry_days"] = current_before["token_expiry_days"]
+
             if action == "created":
                 await recipient_repo.create_from_config(
                     recipient_id=recipient_id,
@@ -349,6 +364,43 @@ async def persist_pipelines_to_db(
             if pipeline_id:
                 current_before = await pipeline_repo.get_current(pipeline_id, include_deleted=False)
                 current_record_id_before = current_before.get("record_id") if current_before else None
+
+            # For updates: preserve optional pipeline metadata from the current DB record when
+            # not explicitly provided in the YAML. This prevents false SCD2 versions caused by
+            # notification_emails, tags, cron_expression, timezone, or key_columns being
+            # overwritten with empty/default values when absent from the YAML config.
+            if action != "created" and current_before:
+                # notification_emails: DB column is "notification_list" (JSON string)
+                if not entry.get("notification_emails"):
+                    _raw_notifs = current_before.get("notification_list") or "[]"
+                    try:
+                        _parsed_notifs = (
+                            json.loads(_raw_notifs) if isinstance(_raw_notifs, str) else (_raw_notifs or [])
+                        )
+                        if _parsed_notifs:
+                            entry["notification_emails"] = _parsed_notifs
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        pass
+
+                # tags: DB column is "tags" (JSON string)
+                if entry.get("tags") is None or entry.get("tags") == {}:
+                    _raw_tags = current_before.get("tags") or "{}"
+                    try:
+                        _parsed_tags = json.loads(_raw_tags) if isinstance(_raw_tags, str) else (_raw_tags or {})
+                        if _parsed_tags:
+                            entry["tags"] = _parsed_tags
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        pass
+
+                # cron_expression and timezone: DB column for timezone is "cron_timezone"
+                if not entry.get("cron_expression") and current_before.get("cron_expression"):
+                    entry["cron_expression"] = current_before["cron_expression"]
+                if not entry.get("timezone") and current_before.get("cron_timezone"):
+                    entry["timezone"] = current_before["cron_timezone"]
+
+                # key_columns: preserve if absent in YAML
+                if not entry.get("key_columns") and current_before.get("key_columns"):
+                    entry["key_columns"] = current_before["key_columns"]
 
             if action == "created":
                 await pipeline_repo.create_from_config(

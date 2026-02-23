@@ -5,6 +5,7 @@ Implements complete provisioning with actual Databricks API calls.
 Tracks all resources in database with rollback support.
 """
 
+import asyncio
 from typing import Any
 from typing import Dict
 from urllib.parse import urlparse
@@ -672,26 +673,63 @@ async def provision_sharepack_new(pool, share_pack: Dict[str, Any]):
         logger.error(f"Provisioning failed for {share_pack_id}: {e}", exc_info=True)
         logger.warning(f"Resources created before failure: {created_resources}")
 
-        # Rollback Databricks only — no DB cleanup needed (DB was never written)
+        # Rollback Databricks only — no DB cleanup needed (DB was never written).
+        # NOTE: Rollback involves synchronous Databricks API calls (pipeline/share/recipient
+        # operations). Each call may take several seconds. With many resources, rollback
+        # can take a minute or more — this is normal. Watch logs for rollback progress.
+        has_rollback = bool(pipeline_rollback_list or share_rollback_list or recipient_rollback_list)
+        if has_rollback:
+            logger.info(
+                f"Starting rollback: {len(pipeline_rollback_list)} pipeline(s), "
+                f"{len(share_rollback_list)} share(s), "
+                f"{len(recipient_rollback_list)} recipient(s). "
+                "This may take a minute — Databricks API calls are in progress..."
+            )
+
         if pipeline_rollback_list:
-            logger.info("Rolling back pipeline changes in Databricks")
+            logger.info("Rolling back pipeline changes in Databricks...")
             try:
-                _rollback_pipelines(pipeline_rollback_list, workspace_url)
+                await asyncio.wait_for(
+                    asyncio.to_thread(_rollback_pipelines, pipeline_rollback_list, workspace_url),
+                    timeout=120,
+                )
+                logger.info("Pipeline rollback complete.")
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Pipeline rollback timed out after 120s — some pipeline changes may not have been reverted."
+                )
             except Exception as rb_err:
                 logger.error(f"Pipeline rollback failed: {rb_err}", exc_info=True)
 
         if share_rollback_list:
-            logger.info("Rolling back share changes in Databricks")
+            logger.info("Rolling back share changes in Databricks...")
             try:
-                _rollback_shares(share_rollback_list, workspace_url)
+                await asyncio.wait_for(
+                    asyncio.to_thread(_rollback_shares, share_rollback_list, workspace_url),
+                    timeout=120,
+                )
+                logger.info("Share rollback complete.")
+            except asyncio.TimeoutError:
+                logger.error("Share rollback timed out after 120s — some share changes may not have been reverted.")
             except Exception as rb_err:
                 logger.error(f"Share rollback failed: {rb_err}", exc_info=True)
 
         if recipient_rollback_list:
-            logger.info("Rolling back recipient changes in Databricks")
+            logger.info("Rolling back recipient changes in Databricks...")
             try:
-                _rollback_recipients(recipient_rollback_list, workspace_url)
+                await asyncio.wait_for(
+                    asyncio.to_thread(_rollback_recipients, recipient_rollback_list, workspace_url),
+                    timeout=120,
+                )
+                logger.info("Recipient rollback complete.")
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Recipient rollback timed out after 120s — some recipient changes may not have been reverted."
+                )
             except Exception as rb_err:
                 logger.error(f"Recipient rollback failed: {rb_err}", exc_info=True)
+
+        if has_rollback:
+            logger.info("All rollback operations finished.")
 
         raise

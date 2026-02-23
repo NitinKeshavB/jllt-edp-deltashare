@@ -357,8 +357,10 @@ def _update_pipeline_and_schedule(
         or (existing.spec.target if existing.spec else None)
     )
     libraries = existing.spec.libraries if existing.spec else None
+
+    # Notifications: only apply when explicitly provided in YAML (non-empty list).
+    # When absent/empty, preserve existing Databricks notifications to avoid clearing them.
     notifications_list = pipeline_config.get("notification", [])
-    notifications = None
     if notifications_list:
         from databricks.sdk.service.pipelines import Notifications
 
@@ -373,6 +375,24 @@ def _update_pipeline_and_schedule(
                 ],
             )
         ]
+    else:
+        # Preserve existing notifications — treat absent/empty list as "no change"
+        notifications = (
+            existing.spec.notifications if existing.spec and getattr(existing.spec, "notifications", None) else None
+        )
+
+    # Tags: only apply when explicitly provided in YAML (non-None).
+    # When absent, preserve existing Databricks tags to avoid clearing them.
+    tags_from_yaml = pipeline_config.get("tags")
+    if tags_from_yaml is not None:
+        effective_tags = tags_from_yaml
+    else:
+        # Preserve existing tags from Databricks clusters — treat absent as "no change"
+        effective_tags = None
+        _spec = existing.spec
+        if _spec and getattr(_spec, "clusters", None) and len(_spec.clusters) > 0:
+            _ct = getattr(_spec.clusters[0], "custom_tags", None)
+            effective_tags = dict(_ct) if _ct else None
 
     result = update_pipeline_target_configuration(
         dltshr_workspace_url=workspace_url,
@@ -383,7 +403,7 @@ def _update_pipeline_and_schedule(
         target=ext_schema,
         libraries=libraries,
         notifications=notifications,
-        tags=pipeline_config.get("tags"),
+        tags=effective_tags,
         serverless=pipeline_config.get("serverless"),
     )
     if isinstance(result, str):
@@ -744,93 +764,115 @@ async def check_and_sync_pipelines_for_added_assets(
         ext_catalog_name = (item.get("ext_catalog_name") or "").strip()
         ext_schema_name = (item.get("ext_schema_name") or "").strip()
 
+        # ── Phase 1 filter: skip assets already covered by YAML pipeline config ──
+        assets_to_check = []
         for asset in item["added_assets"]:
             asset_lower = asset.strip().lower()
-
-            # ── 1. Already covered by YAML pipeline config ──────────────────
             if (share_name, asset_lower) in covered:
                 logger.debug(
                     f"Asset '{asset}' added to share '{share_name}': "
                     "covered by YAML pipeline config — skipping pipeline check."
                 )
-                continue
-
-            # ── 2. DB lookup ─────────────────────────────────────────────────
-            db_found = False
-            if pipeline_repo is not None:
-                try:
-                    db_pipelines = await pipeline_repo.list_by_share_name(share_name)
-                    matches = [p for p in db_pipelines if (p.get("source_table") or "").strip().lower() == asset_lower]
-                    if matches:
-                        db_found = True
-                        logger.info(
-                            f"Asset '{asset}' added to share '{share_name}': "
-                            f"pipeline '{matches[0].get('pipeline_name')}' already tracked in DB — no action needed."
-                        )
-                except Exception as db_err:
-                    logger.warning(f"DB pipeline check for asset '{asset}' in share '{share_name}': {db_err}")
-
-            if db_found:
-                continue
-
-            # ── 3. Databricks API fallback ───────────────────────────────────
-            dbrx_found = False
-            if ext_catalog_name and ext_schema_name:
-                try:
-                    matched = find_pipelines_by_source_and_target(
-                        dltshr_workspace_url=workspace_url,
-                        source_tables=[asset],
-                        ext_catalog_name=ext_catalog_name,
-                        ext_schema_name=ext_schema_name,
-                    )
-                    if matched:
-                        dbrx_found = True
-                        for pipeline in matched:
-                            p_name = pipeline.name or pipeline.pipeline_id
-                            src_tbl = (
-                                (pipeline.spec.configuration or {}).get("pipelines.source_table", asset)
-                                if pipeline.spec
-                                else asset
-                            )
-                            logger.info(
-                                f"Asset '{asset}' added to share '{share_name}': "
-                                f"found existing Databricks pipeline '{p_name}'. "
-                                "Adding minimal DB record for tracking."
-                            )
-                            # Append to pipeline_db_entries so persist_pipelines_to_db creates a DB record
-                            pipeline_db_entries.append(
-                                {
-                                    "action": "updated",
-                                    "pipeline_name": p_name,
-                                    "pipeline_id": None,
-                                    "databricks_pipeline_id": pipeline.pipeline_id,
-                                    "share_name": share_name,
-                                    "source_table": src_tbl,
-                                    "asset_name": src_tbl.split(".")[-1] if "." in src_tbl else src_tbl,
-                                    "target_table": (pipeline.spec.target or "") if pipeline.spec else "",
-                                    "scd_type": "2",
-                                    "key_columns": "",
-                                    "schedule_type": "CRON",
-                                    "cron_expression": "",
-                                    "timezone": "UTC",
-                                    "serverless": bool(pipeline.spec.serverless) if pipeline.spec else False,
-                                    "tags": {},
-                                    "notification_emails": [],
-                                }
-                            )
-                except Exception as dbrx_err:
-                    logger.warning(
-                        f"Databricks pipeline check for asset '{asset}' in share '{share_name}': {dbrx_err}"
-                    )
             else:
-                logger.debug(
-                    f"Asset '{asset}' added to share '{share_name}': "
-                    "skipping Databricks pipeline search — ext_catalog_name and ext_schema_name "
-                    "are required in the delta_share config to safely scope the search."
-                )
+                assets_to_check.append(asset)
 
-            # ── 4. Not found anywhere ────────────────────────────────────────
-            if not dbrx_found:
+        if not assets_to_check:
+            continue
+
+        # ── Phase 2: DB lookup — fetch ONCE per share, filter in memory ──────────
+        # Avoids one DB round-trip per asset (was previously called inside the per-asset loop).
+        db_pipelines: List[Dict[str, Any]] = []
+        if pipeline_repo is not None:
+            try:
+                db_pipelines = await pipeline_repo.list_by_share_name(share_name)
+            except Exception as db_err:
+                logger.warning(f"DB pipeline list for share '{share_name}': {db_err}")
+
+        db_source_set = {(p.get("source_table") or "").strip().lower() for p in db_pipelines}
+
+        assets_not_in_db: List[str] = []
+        for asset in assets_to_check:
+            asset_lower = asset.strip().lower()
+            if asset_lower in db_source_set:
+                match = next(
+                    (p for p in db_pipelines if (p.get("source_table") or "").strip().lower() == asset_lower), None
+                )
+                logger.info(
+                    f"Asset '{asset}' added to share '{share_name}': "
+                    f"pipeline '{match.get('pipeline_name') if match else '?'}' "
+                    "already tracked in DB — no action needed."
+                )
+            else:
+                assets_not_in_db.append(asset)
+
+        if not assets_not_in_db:
+            continue
+
+        # ── Phase 3: Databricks API fallback — called ONCE per share with all unresolved
+        # assets (not once per asset), to avoid scanning the entire workspace N times.
+        # find_pipelines_by_source_and_target lists ALL pipelines in the workspace and
+        # calls get() for each — O(workspace_pipeline_count) API calls. Batching this
+        # to a single call per share reduces the cost from O(assets × pipelines) to
+        # O(pipelines) per share.
+        dbrx_found_set: set = set()
+        if ext_catalog_name and ext_schema_name:
+            logger.info(
+                f"Share '{share_name}': checking Databricks for {len(assets_not_in_db)} "
+                f"asset(s) not found in DB or YAML: {assets_not_in_db}"
+            )
+            try:
+                matched = find_pipelines_by_source_and_target(
+                    dltshr_workspace_url=workspace_url,
+                    source_tables=assets_not_in_db,
+                    ext_catalog_name=ext_catalog_name,
+                    ext_schema_name=ext_schema_name,
+                )
+                for pipeline in matched:
+                    p_name = pipeline.name or pipeline.pipeline_id
+                    src_tbl = (
+                        (pipeline.spec.configuration or {}).get("pipelines.source_table", "") if pipeline.spec else ""
+                    )
+                    src_tbl_lower = src_tbl.strip().lower()
+                    dbrx_found_set.add(src_tbl_lower)
+                    logger.info(
+                        f"Asset '{src_tbl}' added to share '{share_name}': "
+                        f"found existing Databricks pipeline '{p_name}'. "
+                        "Adding minimal DB record for tracking."
+                    )
+                    pipeline_db_entries.append(
+                        {
+                            "action": "updated",
+                            "pipeline_name": p_name,
+                            "pipeline_id": None,
+                            "databricks_pipeline_id": pipeline.pipeline_id,
+                            "share_name": share_name,
+                            "source_table": src_tbl,
+                            "asset_name": src_tbl.split(".")[-1] if "." in src_tbl else src_tbl,
+                            "target_table": (pipeline.spec.target or "") if pipeline.spec else "",
+                            "scd_type": "2",
+                            "key_columns": "",
+                            "schedule_type": "CRON",
+                            "cron_expression": "",
+                            "timezone": "UTC",
+                            "serverless": bool(pipeline.spec.serverless) if pipeline.spec else False,
+                            "tags": {},
+                            "notification_emails": [],
+                        }
+                    )
+            except Exception as dbrx_err:
+                logger.warning(
+                    f"Databricks pipeline check for share '{share_name}' " f"assets {assets_not_in_db}: {dbrx_err}"
+                )
+        else:
+            logger.debug(
+                f"Share '{share_name}': skipping Databricks pipeline search for "
+                f"{len(assets_not_in_db)} unresolved asset(s) — ext_catalog_name and "
+                "ext_schema_name are required in the delta_share config to safely scope the search."
+            )
+
+        # ── Phase 4: collect assets not found anywhere ────────────────────────────
+        for asset in assets_not_in_db:
+            if asset.strip().lower() not in dbrx_found_set:
                 missing.setdefault(share_name, []).append(asset)
 
     if missing:
@@ -842,5 +884,5 @@ async def check_and_sync_pipelines_for_added_assets(
             + "\n\nPlease add a 'pipelines' section in the YAML for each asset, or ensure "
             "the pipeline already exists in Databricks (with ext_catalog_name and "
             "ext_schema_name set in the delta_share config for automatic detection).\n"
-            "All share/recipient changes from this run have been rolled back."
+            "All share/recipient/pipeline changes from this run are being rolled back."
         )

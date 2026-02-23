@@ -148,13 +148,15 @@ def _apply_recipient_updates(
     workspace_url: str,
 ) -> None:
     """Apply updates to an existing recipient (D2D: description; D2O: description, IPs, token expiry, rotate)."""
-    # Description (both types)
+    # Description (both types) — only update if explicitly provided in YAML (non-empty).
+    # Treat absent/empty description as "no change": preserve the existing Databricks value.
     new_description = (recip_config.get("description") or "").strip()
-    current_comment = (existing.comment or "").strip() if hasattr(existing, "comment") and existing.comment else ""
-    if new_description != current_comment:
-        result = update_recipient_description(recipient_name, new_description, workspace_url)
-        if isinstance(result, str) and "error" in result.lower():
-            raise RuntimeError(f"Failed to update description for {recipient_name}: {result}")
+    if new_description:
+        current_comment = (existing.comment or "").strip() if hasattr(existing, "comment") and existing.comment else ""
+        if new_description != current_comment:
+            result = update_recipient_description(recipient_name, new_description, workspace_url)
+            if isinstance(result, str) and "error" in result.lower():
+                raise RuntimeError(f"Failed to update description for {recipient_name}: {result}")
 
     if recipient_type != "D2O":
         return
@@ -270,7 +272,9 @@ async def ensure_recipients(
                 (existing.comment or "").strip() if hasattr(existing, "comment") and existing.comment else ""
             )
             new_description = (recip_config.get("description") or "").strip()
-            description_matches = current_comment == new_description
+            # Treat absent/empty description as "no change" — only count as mismatch when
+            # a non-empty description is explicitly provided in the YAML.
+            description_matches = not new_description or (new_description == current_comment)
 
             if recipient_type == "D2O":
                 current_ips = set()
@@ -351,7 +355,8 @@ async def ensure_recipients(
                     "ip_access_list": list(effective_ips) if recipient_type == "D2O" else [],
                     "token_expiry_days": recip_config.get("token_expiry", 0),
                     "token_rotation_enabled": recip_config.get("token_rotation", False),
-                    "description": (recip_config.get("description") or "").strip(),
+                    # Preserve current Databricks description when not provided in YAML
+                    "description": new_description if new_description else current_comment,
                 }
             )
             continue

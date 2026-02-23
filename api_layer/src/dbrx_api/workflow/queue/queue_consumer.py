@@ -198,8 +198,16 @@ async def start_queue_consumer(queue_client, db_pool):
 
                 except Exception as e:
                     logger.error(f"Error processing message: {e}", exc_info=True)
-                    # Message will become visible again for retry
-                    # Don't delete - let it retry after visibility timeout
+                    if not is_retryable_error(e):
+                        # Non-retryable error: delete message so it is not re-queued
+                        logger.warning(
+                            f"Non-retryable error — deleting message to prevent re-queue: " f"{type(e).__name__}: {e}"
+                        )
+                        try:
+                            queue_client.delete_message(msg)
+                        except Exception as del_err:
+                            logger.error(f"Failed to delete message after non-retryable error: {del_err}")
+                    # Retryable error: message will become visible again after visibility timeout
 
         except asyncio.CancelledError:
             logger.info("Queue consumer task cancelled - shutting down")

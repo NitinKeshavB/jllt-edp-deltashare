@@ -157,6 +157,7 @@ async def ensure_shares(
         if share_assets_declarative:
             # Declarative approach: use provided list as complete desired state
             desired_share_assets = list(share_assets_declarative)
+            manage_assets = True  # explicitly configured — reconcile assets
             logger.debug(
                 f"Share {share_name}: Using declarative share_assets (complete state): {desired_share_assets}"
             )
@@ -178,15 +179,18 @@ async def ensure_shares(
             to_remove_set = set(share_assets_to_remove_explicit)
 
             desired_share_assets = list((current_set | to_add_set) - to_remove_set)
+            manage_assets = True  # explicitly configured — reconcile assets
             logger.debug(
                 f"Share {share_name}: Using explicit share_assets. "
                 f"Current={current_set}, Add={to_add_set}, Remove={to_remove_set}, "
                 f"Desired={desired_share_assets}"
             )
         else:
-            # No share asset management specified - keep existing or create with none
+            # Neither share_assets nor share_assets_to_add/remove specified in YAML.
+            # Treat as "no change" — do NOT compute diffs or touch existing assets.
             desired_share_assets = []
-            logger.debug(f"Share {share_name}: No share_assets specified, using empty list")
+            manage_assets = False
+            logger.debug(f"Share {share_name}: No share_assets specified — existing assets preserved as-is")
 
         # Recipient management - support both declarative and explicit approaches
         # Approach 1 (Declarative): Use 'recipients' field as complete desired state
@@ -199,6 +203,7 @@ async def ensure_shares(
         if recipients_declarative:
             # Declarative approach: use provided list as complete desired state
             desired_recipients = list(recipients_declarative)
+            manage_recipients = True  # explicitly configured — reconcile recipients
             logger.debug(f"Share {share_name}: Using declarative recipients (complete state): {desired_recipients}")
         elif recipients_to_add_explicit or recipients_to_remove_explicit:
             # Explicit approach: compute based on current + add - remove
@@ -216,15 +221,18 @@ async def ensure_shares(
             to_remove_set = set(recipients_to_remove_explicit)
 
             desired_recipients = list((current_set | to_add_set) - to_remove_set)
+            manage_recipients = True  # explicitly configured — reconcile recipients
             logger.debug(
                 f"Share {share_name}: Using explicit recipients. "
                 f"Current={current_set}, Add={to_add_set}, Remove={to_remove_set}, "
                 f"Desired={desired_recipients}"
             )
         else:
-            # No recipient management specified - keep existing or create with none
+            # Neither recipients nor recipients_to_add/remove specified in YAML.
+            # Treat as "no change" — do NOT compute diffs or touch existing recipients.
             desired_recipients = []
-            logger.debug(f"Share {share_name}: No recipients specified, using empty list")
+            manage_recipients = False
+            logger.debug(f"Share {share_name}: No recipients specified — existing recipients preserved as-is")
 
         delta_share_meta = share_config.get("delta_share") or {}
         ext_catalog_name = delta_share_meta.get("ext_catalog_name") or ""
@@ -311,20 +319,29 @@ async def ensure_shares(
         current_objects = get_share_objects(share_name=share_name, dltshr_workspace_url=workspace_url)
         current_recipients = get_share_recipients(share_name=share_name, dltshr_workspace_url=workspace_url)
 
-        desired_objects = _assets_to_objects_dict(desired_share_assets)
         current_tables = set(current_objects.get("tables", []))
         current_views = set(current_objects.get("views", []))
         current_schemas = set(current_objects.get("schemas", []))
-        desired_tables = set(desired_objects.get("tables", []))
-        desired_views = set(desired_objects.get("views", []))
-        desired_schemas = set(desired_objects.get("schemas", []))
+        current_rec_set = set(current_recipients)
 
-        to_add_tables = list(desired_tables - current_tables)
-        to_remove_tables = list(current_tables - desired_tables)
-        to_add_views = list(desired_views - current_views)
-        to_remove_views = list(current_views - desired_views)
-        to_add_schemas = list(desired_schemas - current_schemas)
-        to_remove_schemas = list(current_schemas - desired_schemas)
+        # Only compute asset diffs when the YAML explicitly configures share_assets.
+        # manage_assets=False means the field was absent/empty in YAML — leave existing assets unchanged
+        # to avoid accidentally removing them and deleting their pipelines.
+        if manage_assets:
+            desired_objects = _assets_to_objects_dict(desired_share_assets)
+            desired_tables = set(desired_objects.get("tables", []))
+            desired_views = set(desired_objects.get("views", []))
+            desired_schemas = set(desired_objects.get("schemas", []))
+            to_add_tables = list(desired_tables - current_tables)
+            to_remove_tables = list(current_tables - desired_tables)
+            to_add_views = list(desired_views - current_views)
+            to_remove_views = list(current_views - desired_views)
+            to_add_schemas = list(desired_schemas - current_schemas)
+            to_remove_schemas = list(current_schemas - desired_schemas)
+        else:
+            to_add_tables = to_remove_tables = []
+            to_add_views = to_remove_views = []
+            to_add_schemas = to_remove_schemas = []
 
         objects_added = {
             "tables": to_add_tables,
@@ -336,10 +353,15 @@ async def ensure_shares(
             "views": to_remove_views,
             "schemas": to_remove_schemas,
         }
-        current_rec_set = set(current_recipients)
-        desired_rec_set = set(desired_recipients)
-        recipients_added = list(desired_rec_set - current_rec_set)
-        recipients_removed = list(current_rec_set - desired_rec_set)
+
+        # Only compute recipient diffs when the YAML explicitly configures recipients.
+        # manage_recipients=False means the field was absent/empty in YAML — leave existing recipients unchanged.
+        if manage_recipients:
+            desired_rec_set = set(desired_recipients)
+            recipients_added = list(desired_rec_set - current_rec_set)
+            recipients_removed = list(current_rec_set - desired_rec_set)
+        else:
+            recipients_added = recipients_removed = []
 
         if not (
             to_add_tables
